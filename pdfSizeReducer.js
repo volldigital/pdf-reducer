@@ -38,6 +38,8 @@ const N_DECODE = PDFName.of('Decode');
 const N_DECODEPARMS = PDFName.of('DecodeParms');
 const N_IMAGEMASK = PDFName.of('ImageMask');
 const N_SMASK = PDFName.of('SMask');
+const N_MASK = PDFName.of('Mask');
+const N_MATTE = PDFName.of('Matte');
 const N_DCTDECODE = PDFName.of('DCTDecode');
 const N_DEVICERGB = PDFName.of('DeviceRGB');
 const N_DEVICEGRAY = PDFName.of('DeviceGray');
@@ -183,6 +185,8 @@ function readImageParams(dict) {
     hasDecode: decode instanceof PDFArray,
     isImageMask: imageMask === PDFBool.True,
     hasSMask: dict.get(N_SMASK) !== undefined,
+    hasMask: dict.get(N_MASK) !== undefined,
+    hasMatte: dict.get(N_MATTE) !== undefined,
   };
 }
 
@@ -237,6 +241,11 @@ function applyReencoded(context, ref, dict, result) {
 function canReencode(p) {
   if (p.isImageMask) return skip('image mask');
   if (p.hasDecode) return skip('has /Decode array');
+  // /Mask (color-key ranges or a stencil mask): re-encoding shifts the exact
+  // sample values the mask keys on. /Matte: samples are pre-blended against a
+  // matte colour. Both are unsafe to re-encode -> pass through.
+  if (p.hasMask) return skip('has /Mask');
+  if (p.hasMatte) return skip('has /Matte');
   if (p.filter !== N_DCTDECODE) return skip('filter is not a single DCTDecode');
   if (p.colorSpace !== N_DEVICERGB && p.colorSpace !== N_DEVICEGRAY) {
     return skip('unsupported color space');

@@ -80,3 +80,17 @@ This file records the decisions made while building `pdfSizeReducer.js`, and **w
 **Why (root cause):** pdf-lib's typed `lookup(name, PDFDict)` *throws* when the key is absent rather than returning undefined. `isSigned()` therefore threw on every PDF without an `/AcroForm`; its conservative catch returned `true`, so `reduce()` treated every image PDF as "signed" and returned the original unchanged. This was a latent Step 2 defect that only surfaced once `reduce` actually processed images. `lookupMaybe` returns undefined on a missing/mismatched key.
 
 **Status:** re-encode pipeline live in `reduce()`. Tests in `test/reduce.test.js` (4, all passing): a large RGB scan shrinks with page content streams byte-identical and page count preserved; a grayscale scan shrinks and stays DeviceGray; re-encoded images have consistent `/Length`, still decode as JPEG, and respect the dimension cap; an already-small image triggers the smaller-only rule and returns the original verbatim. Full suite: **16/16 passing**.
+
+---
+
+## 2026-07-08 — Step 5: SMask handling + finalized pass-throughs
+
+### D14. SMask images are handled by the existing pipeline; no special case needed
+**Decision:** A soft mask (`/SMask`) is a *separate* DeviceGray image XObject, so it is enumerated and gated like any other image: if it is DCTDecode DeviceGray it is re-encoded as grayscale; otherwise (typically FlateDecode) it is passed through. Replacing it in place at its own ref keeps the base image's `/SMask` link valid automatically. A base image's own re-encode is independent of its SMask (JPEG has no alpha), so the two can be downsampled independently — the PDF maps both to the unit square, so differing result dimensions are spec-valid.
+**Why:** No bespoke SMask code is required; the surgical in-place model already does the right thing. Verified by test: base RGB + a DeviceGray DCT SMask → both downsampled, `/SMask` link preserved, mask still DeviceGray.
+
+### D15. Also pass through images carrying `/Mask` or `/Matte`
+**Decision:** Extend the gate to skip any image with a `/Mask` (color-key ranges or stencil-mask stream) or `/Matte` (pre-blended soft-mask matte).
+**Why:** Color-key masking keys on exact sample values, and matte samples are pre-blended against a matte colour — re-encoding (quality change + downsample) shifts those values and would break the masking/blend. Safe pass-through, consistent with D4/D7.
+
+**Status:** gate extended (`hasMask`/`hasMatte`); SMask handling confirmed. Tests in `test/masks.test.js` (4, all passing): grayscale DCT SMask re-encoded with link preserved; `/Mask` image skipped and returned verbatim; mixed RGB+CMYK doc shrinks the RGB while the CMYK bytes stay byte-identical and content streams are unchanged; an image shared across two pages is re-encoded exactly once. Full suite: **20/20 passing**.
