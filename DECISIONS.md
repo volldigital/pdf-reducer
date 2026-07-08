@@ -52,3 +52,17 @@ This file records the decisions made while building `pdfSizeReducer.js`, and **w
 **Why:** Better to skip a possibly-signed document than to invalidate a real signature. This is a guard, not exhaustive signature parsing.
 
 **Status:** skeleton implemented in `pdfSizeReducer.js`; the image pipeline is a no-op (`changedCount = 0`) so far. Tests in `test/guards.test.js` (5, all passing): image-free PDF round-trips byte-identical, corrupt/empty/non-string inputs return verbatim, and an encrypted fixture is passed through untouched.
+
+---
+
+## 2026-07-08 — Step 3: Enumeration + gating (read-only)
+
+### D11. Enumerate images via `context.enumerateIndirectObjects()`; gate order matters
+**Decision:** Collect image XObjects as top-level `PDFRawStream`s whose dict `Subtype === /Image`. The `canReencode` gate checks, in order: not `ImageMask` → no `/Decode` array → `Filter === /DCTDecode` (single name) → `ColorSpace ∈ {/DeviceRGB, /DeviceGray}` → has dimensions.
+**Why:** Image streams are always top-level indirect objects (never nested in object streams), so enumeration reliably finds all of them, and replacing one at its ref keeps every content-stream `Do` reference valid. Added a read-only `inspectImages()` export for diagnostics/tests.
+
+**Empirical findings (verified by tests, not assumptions):**
+- pdf-lib's `embedJpg` adds an Adobe inversion `/Decode` array to **CMYK** JPEGs, so real-world CMYK scans are caught by the `/Decode` gate even before the colour-space gate — either way they are correctly skipped.
+- pdf-lib **embeds images lazily** (only at `save()`), so an image object isn't in `doc.context` until the document has been saved once. (Affects how fixtures/mutations are built, and confirms that reading image bytes happens on a *loaded* doc.)
+
+**Status:** `collectImageStreams`, `readImageParams`, `canReencode`, and `inspectImages` implemented; still no mutation of the document. Tests in `test/inspect.test.js` (7, all passing): RGB & Gray JPEGs eligible; CMYK, PNG/Flate, `/Decode`-tagged, and ImageMask images skipped; text-only PDF yields no images. Full suite: **12/12 passing**.

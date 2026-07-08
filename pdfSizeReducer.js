@@ -19,8 +19,26 @@ import {
   PDFDict,
   PDFArray,
   PDFNumber,
+  PDFBool,
+  PDFRawStream,
   EncryptedPDFError,
 } from 'pdf-lib';
+
+// Interned PDFName singletons — pdf-lib caches these, so identity (===)
+// comparison against parsed values is valid.
+const N_SUBTYPE = PDFName.of('Subtype');
+const N_IMAGE = PDFName.of('Image');
+const N_FILTER = PDFName.of('Filter');
+const N_COLORSPACE = PDFName.of('ColorSpace');
+const N_WIDTH = PDFName.of('Width');
+const N_HEIGHT = PDFName.of('Height');
+const N_BPC = PDFName.of('BitsPerComponent');
+const N_DECODE = PDFName.of('Decode');
+const N_IMAGEMASK = PDFName.of('ImageMask');
+const N_SMASK = PDFName.of('SMask');
+const N_DCTDECODE = PDFName.of('DCTDecode');
+const N_DEVICERGB = PDFName.of('DeviceRGB');
+const N_DEVICEGRAY = PDFName.of('DeviceGray');
 
 /** Default tuning ("Balanced" profile — see DECISIONS.md D5). */
 export const DEFAULTS = Object.freeze({
@@ -82,11 +100,104 @@ export async function reduce(base64Pdf, options = {}) {
   }
 }
 
-export default { reduce, DEFAULTS };
+/**
+ * Read-only inspection: list every image XObject in the PDF with the fields we
+ * gate on and whether it is eligible for re-compression. Used for diagnostics
+ * and tests; performs no mutation.
+ * @param {string} base64Pdf
+ * @returns {Promise<Array<object>>}
+ */
+export async function inspectImages(base64Pdf) {
+  const bytes = toBytes(base64Pdf);
+  const doc = await PDFDocument.load(bytes, { updateMetadata: false });
+  return collectImageStreams(doc.context).map(({ ref, dict }) => {
+    const params = readImageParams(dict);
+    const gate = canReencode(params);
+    return {
+      ref: ref.toString(),
+      width: params.width,
+      height: params.height,
+      bitsPerComponent: params.bpc,
+      filter: label(params.filter),
+      colorSpace: label(params.colorSpace),
+      hasDecode: params.hasDecode,
+      isImageMask: params.isImageMask,
+      hasSMask: params.hasSMask,
+      eligible: gate.ok,
+      skipReason: gate.reason,
+    };
+  });
+}
+
+export default { reduce, inspectImages, DEFAULTS };
 
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Collect every image XObject in the document as indirect objects.
+ * Image streams are always top-level indirect objects (never inside object
+ * streams), so enumerateIndirectObjects() reliably surfaces all of them.
+ * @returns {Array<{ref: import('pdf-lib').PDFRef, stream: PDFRawStream, dict: PDFDict}>}
+ */
+function collectImageStreams(context) {
+  const out = [];
+  for (const [ref, obj] of context.enumerateIndirectObjects()) {
+    if (!(obj instanceof PDFRawStream)) continue;
+    if (obj.dict.lookup(N_SUBTYPE) !== N_IMAGE) continue;
+    out.push({ ref, stream: obj, dict: obj.dict });
+  }
+  return out;
+}
+
+/** Extract the fields the gate depends on from an image XObject dict. */
+function readImageParams(dict) {
+  const imageMask = dict.lookup(N_IMAGEMASK);
+  const decode = dict.lookup(N_DECODE);
+  return {
+    filter: dict.lookup(N_FILTER),
+    colorSpace: dict.lookup(N_COLORSPACE),
+    width: numOf(dict, N_WIDTH),
+    height: numOf(dict, N_HEIGHT),
+    bpc: numOf(dict, N_BPC),
+    hasDecode: decode instanceof PDFArray,
+    isImageMask: imageMask === PDFBool.True,
+    hasSMask: dict.get(N_SMASK) !== undefined,
+  };
+}
+
+/**
+ * The v1 gate (see DECISIONS.md D4): re-compress only single-filter DCTDecode
+ * (JPEG) images in DeviceRGB/DeviceGray, with no /Decode array and not an
+ * image mask. Everything else is passed through untouched.
+ * @returns {{ok: boolean, reason: string|null}}
+ */
+function canReencode(p) {
+  if (p.isImageMask) return skip('image mask');
+  if (p.hasDecode) return skip('has /Decode array');
+  if (p.filter !== N_DCTDECODE) return skip('filter is not a single DCTDecode');
+  if (p.colorSpace !== N_DEVICERGB && p.colorSpace !== N_DEVICEGRAY) {
+    return skip('unsupported color space');
+  }
+  if (!p.width || !p.height) return skip('missing dimensions');
+  return { ok: true, reason: null };
+}
+
+const skip = (reason) => ({ ok: false, reason });
+
+/** Read a numeric dict entry as a JS number, or undefined if absent. */
+function numOf(dict, name) {
+  const v = dict.lookup(name, PDFNumber);
+  return v ? v.asNumber() : undefined;
+}
+
+/** Human-readable label for a PDF object, for diagnostics. */
+function label(v) {
+  if (v == null) return null;
+  if (v instanceof PDFName || v instanceof PDFArray) return v.toString();
+  return v.constructor?.name ?? String(v);
+}
 
 /** Decode a base64 string to bytes. Lenient: invalid input yields garbage
  * bytes that later fail to parse as a PDF (and are then passed through). */
