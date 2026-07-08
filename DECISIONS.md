@@ -66,3 +66,17 @@ This file records the decisions made while building `pdfSizeReducer.js`, and **w
 - pdf-lib **embeds images lazily** (only at `save()`), so an image object isn't in `doc.context` until the document has been saved once. (Affects how fixtures/mutations are built, and confirms that reading image bytes happens on a *loaded* doc.)
 
 **Status:** `collectImageStreams`, `readImageParams`, `canReencode`, and `inspectImages` implemented; still no mutation of the document. Tests in `test/inspect.test.js` (7, all passing): RGB & Gray JPEGs eligible; CMYK, PNG/Flate, `/Decode`-tagged, and ImageMask images skipped; text-only PDF yields no images. Full suite: **12/12 passing**.
+
+---
+
+## 2026-07-08 — Step 4: DCTDecode re-encode + in-place replacement
+
+### D12. Re-encode with sharp; replace in place at the same ref
+**Decision:** For each eligible image: `sharp(bytes).resize({ width, height: maxDimension, fit:'inside', withoutEnlargement:true })`, `.grayscale()` when DeviceGray, `.jpeg({ quality, mozjpeg:true })`. Then update the dict (`Width/Height/BitsPerComponent=8/ColorSpace/Filter=DCTDecode`, delete `DecodeParms`) and `context.assign(ref, PDFRawStream.of(dict, newBytes))`. Keep the result only if `newBytes.length <= original.length * minSavingsRatio` (0.95). Each image is re-encoded inside its own try/catch.
+**Why:** Reusing the ref keeps all content-stream `Do` references valid, so only image data changes. Confirmed empirically: pdf-lib recomputes `/Length` from the new contents at save time (we don't set it), and page **content-stream bytes are byte-identical** before/after (the preservation proof). No `.rotate()` — EXIF auto-rotate would desync pixels from the content-stream CTM.
+
+### D13. Bug fix: typed `lookup(name, Type)` throws on missing key
+**Decision:** Use `lookupMaybe(name, Type)` for all optional typed lookups (in `isSigned` and `numOf`).
+**Why (root cause):** pdf-lib's typed `lookup(name, PDFDict)` *throws* when the key is absent rather than returning undefined. `isSigned()` therefore threw on every PDF without an `/AcroForm`; its conservative catch returned `true`, so `reduce()` treated every image PDF as "signed" and returned the original unchanged. This was a latent Step 2 defect that only surfaced once `reduce` actually processed images. `lookupMaybe` returns undefined on a missing/mismatched key.
+
+**Status:** re-encode pipeline live in `reduce()`. Tests in `test/reduce.test.js` (4, all passing): a large RGB scan shrinks with page content streams byte-identical and page count preserved; a grayscale scan shrinks and stays DeviceGray; re-encoded images have consistent `/Length`, still decode as JPEG, and respect the dimension cap; an already-small image triggers the smaller-only rule and returns the original verbatim. Full suite: **16/16 passing**.

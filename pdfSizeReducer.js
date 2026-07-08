@@ -13,6 +13,7 @@
 //
 // See DECISIONS.md for the rationale behind the approach and its limits.
 
+import sharp from 'sharp';
 import {
   PDFDocument,
   PDFName,
@@ -34,6 +35,7 @@ const N_WIDTH = PDFName.of('Width');
 const N_HEIGHT = PDFName.of('Height');
 const N_BPC = PDFName.of('BitsPerComponent');
 const N_DECODE = PDFName.of('Decode');
+const N_DECODEPARMS = PDFName.of('DecodeParms');
 const N_IMAGEMASK = PDFName.of('ImageMask');
 const N_SMASK = PDFName.of('SMask');
 const N_DCTDECODE = PDFName.of('DCTDecode');
@@ -80,9 +82,26 @@ export async function reduce(base64Pdf, options = {}) {
     // layout and invalidates any signature -> pass through untouched.
     if (isSigned(doc)) return base64Pdf;
 
-    // --- image re-compression pipeline (Steps 3–6) ---
-    // Not yet implemented: this skeleton changes nothing.
-    const changedCount = 0;
+    // --- image re-compression pipeline ---
+    let changedCount = 0;
+    for (const { ref, stream, dict } of collectImageStreams(doc.context)) {
+      const params = readImageParams(dict);
+      if (!canReencode(params).ok) continue;
+
+      try {
+        const original = stream.contents; // for DCTDecode these bytes are a JPEG
+        const result = await reencodeJpeg(original, params, opts);
+        if (!result) continue;
+
+        // Keep the re-encoded image only if it is a real improvement.
+        if (result.bytes.length > original.length * opts.minSavingsRatio) continue;
+
+        applyReencoded(doc.context, ref, dict, result);
+        changedCount++;
+      } catch {
+        // One bad image must not abort the run; leave it untouched.
+      }
+    }
 
     // Nothing changed: return the ORIGINAL string verbatim (don't re-save, so
     // byte-identical pass-through is guaranteed).
@@ -168,6 +187,48 @@ function readImageParams(dict) {
 }
 
 /**
+ * Downsample + re-encode a JPEG image with sharp.
+ * @param {Uint8Array} bytes the original JPEG (a DCTDecode stream's contents)
+ * @param {object} params from readImageParams (drives grayscale handling)
+ * @param {object} opts maxDimension / quality
+ * @returns {Promise<{bytes: Uint8Array, width: number, height: number, isGray: boolean} | null>}
+ */
+async function reencodeJpeg(bytes, params, opts) {
+  const isGray = params.colorSpace === N_DEVICEGRAY;
+
+  let pipeline = sharp(Buffer.from(bytes)).resize({
+    width: opts.maxDimension,
+    height: opts.maxDimension,
+    fit: 'inside',
+    withoutEnlargement: true, // never upscale
+  });
+  // NOTE: deliberately no .rotate() — EXIF auto-rotation would desync the
+  // pixels from the PDF content-stream CTM (see DECISIONS.md).
+  if (isGray) pipeline = pipeline.grayscale();
+
+  const { data, info } = await pipeline
+    .jpeg({ quality: opts.quality, mozjpeg: true })
+    .toBuffer({ resolveWithObject: true });
+
+  return { bytes: data, width: info.width, height: info.height, isGray };
+}
+
+/**
+ * Replace an image XObject's stream in place, reusing its ref so every
+ * content-stream `Do` reference to it stays valid. pdf-lib recomputes /Length
+ * from the new contents at save time, so we don't set it here.
+ */
+function applyReencoded(context, ref, dict, result) {
+  dict.set(N_WIDTH, PDFNumber.of(result.width));
+  dict.set(N_HEIGHT, PDFNumber.of(result.height));
+  dict.set(N_BPC, PDFNumber.of(8)); // JPEG is always 8-bit
+  dict.set(N_COLORSPACE, result.isGray ? N_DEVICEGRAY : N_DEVICERGB);
+  dict.set(N_FILTER, N_DCTDECODE);
+  dict.delete(N_DECODEPARMS); // plain DCTDecode has no decode parameters
+  context.assign(ref, PDFRawStream.of(dict, result.bytes));
+}
+
+/**
  * The v1 gate (see DECISIONS.md D4): re-compress only single-filter DCTDecode
  * (JPEG) images in DeviceRGB/DeviceGray, with no /Decode array and not an
  * image mask. Everything else is passed through untouched.
@@ -186,9 +247,10 @@ function canReencode(p) {
 
 const skip = (reason) => ({ ok: false, reason });
 
-/** Read a numeric dict entry as a JS number, or undefined if absent. */
+/** Read a numeric dict entry as a JS number, or undefined if absent.
+ * Uses lookupMaybe because typed lookup() throws on a missing key. */
 function numOf(dict, name) {
-  const v = dict.lookup(name, PDFNumber);
+  const v = dict.lookupMaybe(name, PDFNumber);
   return v ? v.asNumber() : undefined;
 }
 
@@ -221,15 +283,17 @@ function isSigned(doc) {
     // /Perms (usage-rights / DocMDP) implies a document-level signature.
     if (catalog.lookup(PDFName.of('Perms'))) return true;
 
-    const acroForm = catalog.lookup(PDFName.of('AcroForm'), PDFDict);
+    // NOTE: pdf-lib's typed lookup(name, Type) THROWS when the key is absent,
+    // so all optional lookups must use lookupMaybe (returns undefined instead).
+    const acroForm = catalog.lookupMaybe(PDFName.of('AcroForm'), PDFDict);
     if (!acroForm) return false;
 
     // SigFlags bit 1 (SignaturesExist).
-    const sigFlags = acroForm.lookup(PDFName.of('SigFlags'), PDFNumber);
+    const sigFlags = acroForm.lookupMaybe(PDFName.of('SigFlags'), PDFNumber);
     if (sigFlags && (sigFlags.asNumber() & 1) === 1) return true;
 
     // A top-level field of type /Sig.
-    const fields = acroForm.lookup(PDFName.of('Fields'), PDFArray);
+    const fields = acroForm.lookupMaybe(PDFName.of('Fields'), PDFArray);
     if (fields) {
       for (let i = 0; i < fields.size(); i++) {
         const field = doc.context.lookup(fields.get(i), PDFDict);
