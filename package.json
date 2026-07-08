@@ -1,0 +1,25 @@
+{
+  "name": "pdf-reducer",
+  "version": "0.1.0",
+  "description": "Reduce the file size of phone-scanned PDFs by re-compressing embedded images, preserving all other content.",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "pdfSizeReducer.js",
+  "exports": "./pdfSizeReducer.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test",
+    "licenses": "license-checker --production --summary",
+    "licenses:check": "license-checker --production --failOn 'AGPL-1.0;AGPL-3.0;GPL-2.0;GPL-3.0'"
+  },
+  "dependencies": {
+    "pdf-lib": "^1.17.1",
+    "sharp": "^0.33.0"
+  },
+  "devDependencies": {
+    "license-checker": "^25.0.1"
+  }
+}
