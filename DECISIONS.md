@@ -34,3 +34,21 @@ This file records the decisions made while building `pdfSizeReducer.js`, and **w
 ### D7. Never corrupt: guards and fail-safe
 **Decision:** Return the **original** base64 unchanged whenever we cannot safely improve the file: on any thrown error; when the PDF is encrypted or digitally signed; when no image got smaller; or when the re-saved output is not smaller than the input. Each image is re-encoded inside its own try/catch so one bad image cannot abort the run.
 **Why:** The overriding requirement is to never lose content or return a broken document. Encrypted PDFs can't be re-saved encrypted by pdf-lib (it would strip protection), and a full re-save invalidates digital signatures — so both are passed through untouched.
+
+---
+
+## 2026-07-08 — Step 2: I/O + guards skeleton
+
+### D8. `reduce()` never throws; string-in / string-out
+**Decision:** `reduce(base64Pdf, options)` is wrapped in a top-level try/catch that returns the original input on any failure. Non-string input is returned as-is. base64 decoding uses Node's lenient `Buffer.from(x, 'base64')`, so malformed input produces bytes that simply fail to parse as a PDF and are then passed through.
+**Why:** Implements the "never return a broken document" contract (D7) at the boundary.
+
+### D9. Encrypted detection via strict load; corrupt handled by the same path
+**Decision:** Load with `PDFDocument.load(bytes, { updateMetadata: false })` **without** `ignoreEncryption`. `EncryptedPDFError` → return original. Any other load error (corrupt/non-PDF) → also return original.
+**Why:** `/Encrypt` in the trailer makes pdf-lib throw `EncryptedPDFError`; using `ignoreEncryption` would decrypt and strip protection, which we must not do. `updateMetadata: false` avoids rewriting `/Info` ModDate.
+
+### D10. Signature detection is conservative
+**Decision:** `isSigned()` returns true on any of: `/Perms` in the catalog, AcroForm `SigFlags` bit 1, or a top-level field with `FT = /Sig`. If detection itself errors, treat as signed (pass through).
+**Why:** Better to skip a possibly-signed document than to invalidate a real signature. This is a guard, not exhaustive signature parsing.
+
+**Status:** skeleton implemented in `pdfSizeReducer.js`; the image pipeline is a no-op (`changedCount = 0`) so far. Tests in `test/guards.test.js` (5, all passing): image-free PDF round-trips byte-identical, corrupt/empty/non-string inputs return verbatim, and an encrypted fixture is passed through untouched.
