@@ -13,7 +13,7 @@ This file records the decisions made while building `pdfSizeReducer.js`, and **w
 ### D2. Library stack: `pdf-lib` (MIT) + `sharp` (Apache-2.0)
 **Decision:** Use `pdf-lib` to parse the PDF and rewrite image XObject streams in place, and `sharp` to resize + re-encode JPEGs.
 **Why:** This is a **commercial, closed-source** application, so AGPL/GPL is disqualified — which rules out MuPDF/`mupdf.js` (AGPL) and every Ghostscript wrapper (AGPL). `pdf-lib` (MIT) and `sharp` (Apache-2.0) are both permissive. `sharp` bundles `libvips` (LGPL-2.1+) as a prebuilt dynamic library, which is LGPL-compliant for closed-source use, and its prebuilt binaries include `mozjpeg` (no system dependencies needed).
-> Licensing was researched from model knowledge (web verification tooling was down at research time). These license facts are stable and high-confidence, but the key URLs (pdf-lib, sharp/libvips) should be live-verified before shipping.
+> Licensing was researched from model knowledge (web verification tooling was down at research time). **Verified on-disk at Step 7** against the actually-installed packages: `pdf-lib` = MIT, `sharp` = Apache-2.0, `@img/sharp-libvips-linux-x64` (bundled libvips) = LGPL-3.0-or-later — a separate prebuilt shared library loaded at runtime (dynamic linking, replaceable), which satisfies LGPL for closed-source commercial use. The `npm run licenses:check` gate confirms no AGPL/GPL in the production tree.
 
 ### D3. Drop `pdf.js` from v1
 **Decision:** Do not use `pdf.js`.
@@ -108,3 +108,20 @@ This file records the decisions made while building `pdfSizeReducer.js`, and **w
 **Why:** The expensive native sharp work runs in parallel (throughput) while memory stays bounded to ~`concurrency` decoded images. Applying mutations sequentially keeps document mutation simple and order-deterministic — verified that `concurrency: 1` and `concurrency: 8` produce byte-identical output.
 
 **Status:** implemented `normalizeOptions` + `mapWithConcurrency`; `concurrency` added to DEFAULTS. Tests in `test/options.test.js` (7, all passing): `maxDimension` caps resolution and a smaller cap yields a smaller file; out-of-range options are clamped (no throw, valid PDF); non-object options fall back to defaults; `minSavingsRatio = 0` returns the original verbatim; a 5-image PDF is fully re-encoded under the pool with content streams preserved; concurrency 1 vs 8 are identical. Full suite: **27/27 passing**.
+
+---
+
+## 2026-07-08 — Step 7: Full suite, e2e fixtures, license gate, docs
+
+### D18. Preservation proven end-to-end on a realistic document
+**Decision:** Add `test/e2e.test.js` exercising a scan-like PDF (large image + invisible opacity-0 OCR text + a filled AcroForm text field with a widget annotation).
+**Why:** Directly proves the headline requirement. After `reduce()`: the file shrinks; the form field's value reads back identical; annotation count per page is unchanged; page content streams are byte-identical (so the invisible OCR text — stored as a `<hex> Tj` literal — survives verbatim); the image is downsampled. Also proven: a second `reduce()` pass is a no-op (stable), and filter-chain `[FlateDecode DCTDecode]` and `CCITTFaxDecode` images are skipped.
+
+### D19. License gate verified; licenses confirmed on-disk
+**Decision:** `npm run licenses:check` fails on AGPL/GPL; run in CI. Licenses verified against installed packages (see D2 note).
+**Why:** Enforces the commercial licensing constraint automatically going forward.
+
+### Docs
+`CLAUDE.md` "Tooling status" replaced with real **Architecture**, **Commands** (`npm test`, `npm run licenses[:check]`), and **Usage** sections.
+
+**Final status:** implementation complete. Full suite **31/31 passing** across `test/{guards,inspect,reduce,masks,options,e2e}.test.js`. License gate: **no AGPL/GPL** in the production tree.

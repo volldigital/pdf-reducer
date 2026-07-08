@@ -35,6 +35,19 @@ Rules that govern how to work here:
 - **Never advance a step without explicit approval** of the current one — the user may review results and request changes that affect the remaining plan.
 - **Document continuously.** Record progress and every decision, including *why* it was made. When a decision changes, document what changed and why so the reasoning stays auditable.
 
-## Tooling status
+## Architecture
 
-No build, lint, or test commands exist yet — there is no `package.json` or toolchain. Add this section with concrete commands once the toolchain is established; do not invent commands before then.
+Single ESM module `pdfSizeReducer.js` (deps: `pdf-lib` for PDF parse/rewrite, `sharp` for JPEG resize/re-encode). `reduce()` is **surgical**: it re-compresses only eligible embedded images and replaces each stream *in place at the same object ref*, so text, AcroForm fields/values, the OCR text layer, annotations, and structure round-trip untouched. Pipeline: guard (encrypted/signed → pass through) → enumerate image XObjects → `canReencode` gate (only single-filter DCTDecode DeviceRGB/DeviceGray, no `/Decode`/`/Mask`/`/Matte`/ImageMask) → bounded-concurrency sharp re-encode → keep only if smaller → save. Any error or non-improvement returns the **original** base64 verbatim. Full rationale and the audit trail live in `DECISIONS.md`.
+
+## Commands
+
+- `npm test` — run the test suite (`node --test`, no extra runner). Single file: `node --test test/e2e.test.js`.
+- `npm run licenses` — production dependency license summary.
+- `npm run licenses:check` — **fails the build on AGPL/GPL** in the production tree (the commercial licensing gate).
+
+## Usage
+
+```js
+import { reduce } from './pdfSizeReducer.js';
+const smaller = await reduce(base64Pdf); // options: { maxDimension, quality, minSavingsRatio, concurrency }
+```
