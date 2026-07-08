@@ -50,6 +50,7 @@ export const DEFAULTS = Object.freeze({
   quality: 72, // JPEG quality (mozjpeg)
   minSavingsRatio: 0.95, // keep a re-encoded image only if <= 95% of the original
   useObjectStreams: true, // pdf-lib save option (lossless)
+  concurrency: 4, // max images re-encoded in parallel (bounds memory)
 });
 
 /**
@@ -62,7 +63,7 @@ export async function reduce(base64Pdf, options = {}) {
   // Contract is string-in/string-out. Anything else: hand it straight back.
   if (typeof base64Pdf !== 'string') return base64Pdf;
 
-  const opts = { ...DEFAULTS, ...options };
+  const opts = normalizeOptions(options);
 
   try {
     const bytes = toBytes(base64Pdf);
@@ -85,24 +86,35 @@ export async function reduce(base64Pdf, options = {}) {
     if (isSigned(doc)) return base64Pdf;
 
     // --- image re-compression pipeline ---
-    let changedCount = 0;
+    // Collect eligible images first, then re-encode them with a bounded
+    // concurrency pool (the expensive, native sharp work runs in parallel),
+    // and finally apply the results sequentially (mutation stays simple and
+    // deterministic).
+    const candidates = [];
     for (const { ref, stream, dict } of collectImageStreams(doc.context)) {
       const params = readImageParams(dict);
       if (!canReencode(params).ok) continue;
+      candidates.push({ ref, dict, params, original: stream.contents });
+    }
 
+    const reencoded = await mapWithConcurrency(candidates, opts.concurrency, async (c) => {
       try {
-        const original = stream.contents; // for DCTDecode these bytes are a JPEG
-        const result = await reencodeJpeg(original, params, opts);
-        if (!result) continue;
-
+        const result = await reencodeJpeg(c.original, c.params, opts);
+        if (!result) return null;
         // Keep the re-encoded image only if it is a real improvement.
-        if (result.bytes.length > original.length * opts.minSavingsRatio) continue;
-
-        applyReencoded(doc.context, ref, dict, result);
-        changedCount++;
+        if (result.bytes.length > c.original.length * opts.minSavingsRatio) return null;
+        return { ref: c.ref, dict: c.dict, result };
       } catch {
         // One bad image must not abort the run; leave it untouched.
+        return null;
       }
+    });
+
+    let changedCount = 0;
+    for (const r of reencoded) {
+      if (!r) continue;
+      applyReencoded(doc.context, r.ref, r.dict, r.result);
+      changedCount++;
     }
 
     // Nothing changed: return the ORIGINAL string verbatim (don't re-save, so
@@ -268,6 +280,37 @@ function label(v) {
   if (v == null) return null;
   if (v instanceof PDFName || v instanceof PDFArray) return v.toString();
   return v.constructor?.name ?? String(v);
+}
+
+/** Validate and clamp caller options against DEFAULTS. Never throws: unknown
+ * or out-of-range values fall back to sane bounds so reduce() stays robust. */
+function normalizeOptions(options) {
+  const o = options && typeof options === 'object' ? options : {};
+  const num = (v, def) => (typeof v === 'number' && Number.isFinite(v) ? v : def);
+  return {
+    maxDimension: Math.max(16, Math.round(num(o.maxDimension, DEFAULTS.maxDimension))),
+    quality: Math.min(100, Math.max(1, Math.round(num(o.quality, DEFAULTS.quality)))),
+    minSavingsRatio: Math.min(1, Math.max(0, num(o.minSavingsRatio, DEFAULTS.minSavingsRatio))),
+    useObjectStreams:
+      typeof o.useObjectStreams === 'boolean' ? o.useObjectStreams : DEFAULTS.useObjectStreams,
+    concurrency: Math.max(1, Math.round(num(o.concurrency, DEFAULTS.concurrency))),
+  };
+}
+
+/** Run `fn` over `items` with at most `limit` in flight at once, preserving
+ * input order in the returned results array. */
+async function mapWithConcurrency(items, limit, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const idx = next++;
+      results[idx] = await fn(items[idx], idx);
+    }
+  };
+  const size = Math.min(limit, items.length);
+  await Promise.all(Array.from({ length: size }, worker));
+  return results;
 }
 
 /** Decode a base64 string to bytes. Lenient: invalid input yields garbage

@@ -94,3 +94,17 @@ This file records the decisions made while building `pdfSizeReducer.js`, and **w
 **Why:** Color-key masking keys on exact sample values, and matte samples are pre-blended against a matte colour — re-encoding (quality change + downsample) shifts those values and would break the masking/blend. Safe pass-through, consistent with D4/D7.
 
 **Status:** gate extended (`hasMask`/`hasMatte`); SMask handling confirmed. Tests in `test/masks.test.js` (4, all passing): grayscale DCT SMask re-encoded with link preserved; `/Mask` image skipped and returned verbatim; mixed RGB+CMYK doc shrinks the RGB while the CMYK bytes stay byte-identical and content streams are unchanged; an image shared across two pages is re-encoded exactly once. Full suite: **20/20 passing**.
+
+---
+
+## 2026-07-08 — Step 6: Options + hardening
+
+### D16. Options are validated and clamped, never trusted blindly
+**Decision:** `normalizeOptions()` coerces caller input: `maxDimension ≥ 16`, `quality ∈ [1,100]`, `minSavingsRatio ∈ [0,1]`, `concurrency ≥ 1`, `useObjectStreams` boolean. Non-object `options` (null, string, …) are ignored and DEFAULTS used.
+**Why:** Keeps the "never throw" contract even with bad input, and makes the knobs safe to expose to callers. `minSavingsRatio = 0` is a valid way to force a no-op (nothing is ever "small enough").
+
+### D17. Bounded-concurrency re-encode; mutation applied sequentially
+**Decision:** Collect eligible images, re-encode them through a `mapWithConcurrency` pool (default 4 in flight), then apply the kept results to the pdf-lib context sequentially.
+**Why:** The expensive native sharp work runs in parallel (throughput) while memory stays bounded to ~`concurrency` decoded images. Applying mutations sequentially keeps document mutation simple and order-deterministic — verified that `concurrency: 1` and `concurrency: 8` produce byte-identical output.
+
+**Status:** implemented `normalizeOptions` + `mapWithConcurrency`; `concurrency` added to DEFAULTS. Tests in `test/options.test.js` (7, all passing): `maxDimension` caps resolution and a smaller cap yields a smaller file; out-of-range options are clamped (no throw, valid PDF); non-object options fall back to defaults; `minSavingsRatio = 0` returns the original verbatim; a 5-image PDF is fully re-encoded under the pool with content streams preserved; concurrency 1 vs 8 are identical. Full suite: **27/27 passing**.
