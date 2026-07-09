@@ -125,3 +125,35 @@ This file records the decisions made while building `pdfSizeReducer.js`, and **w
 `CLAUDE.md` "Tooling status" replaced with real **Architecture**, **Commands** (`npm test`, `npm run licenses[:check]`), and **Usage** sections.
 
 **Final status:** implementation complete. Full suite **31/31 passing** across `test/{guards,inspect,reduce,masks,options,e2e}.test.js`. License gate: **no AGPL/GPL** in the production tree.
+
+---
+
+## 2026-07-09 — Open-sourcing the repository
+
+The project is being open-sourced on GitHub (`volldigital/pdf-reducer`) and published to npm for reuse, using trunk-based development. The decisions below were made with the user; the driving brief is `OPEN_SOURCE_TASK.md`.
+
+### D20. License: `0BSD` (BSD Zero Clause)
+**Decision:** Release the project's own code under **0BSD**.
+**Why:** The brief asked for "the most permissive license possible, given the current dependencies." The production tree is entirely permissive (MIT / Apache-2.0 / ISC / 0BSD / MIT-AND-Zlib) plus a single **dynamically-linked** LGPL-3.0-or-later library (bundled libvips via `sharp`), which does not impose copyleft on a caller — so any permissive license was available. 0BSD is the literal maximum: public-domain-equivalent, OSI-approved, a valid SPDX id, and — unlike MIT — it imposes **no attribution or notice-retention obligation** on consumers. Precedent: `tslib`, already in this project's dependency tree, is 0BSD, so scanners recognise it. Trade-off accepted: no explicit patent grant (neither has MIT) and it is less ubiquitous than MIT. Copyright line: `Copyright (C) 2026 disphere interactive GmbH`.
+
+### D21. Artifact host: npm public registry
+**Decision:** Publish to the public npm registry (`registry.npmjs.org`), not GitHub Packages.
+**Why:** For a reusable open-source library the consumer experience dominates. npm public means `npm install pdf-reducer` with zero config and no authentication. GitHub Packages would force every consumer — even for a public package — into a scoped name, an `.npmrc`, and an auth token, which is an adoption barrier that defeats the point of open-sourcing. GitHub Packages' only edge (publish via the built-in `GITHUB_TOKEN`) does not outweigh that consumer friction. The name `pdf-reducer` was verified **available** (registry 404) so no scope is needed.
+
+### D22. Publish trigger: manual `workflow_dispatch`, not on-push
+**Decision:** Releases are triggered manually via a `workflow_dispatch` "Release" workflow with a version input; pushes to `main`/`feature/*` and PRs run **build + test only**.
+**Why:** The brief floated "publish on push to `main`," but npm rejects republishing an existing version, so on-every-push publishing fails on the first push after any release unless a version is auto-bumped first — extra machinery and misfire risk. Manual dispatch keeps the maintainer as the version authority with a one-button release (`patch`/`minor`/`major` or explicit semver → bump, tag, publish), while still satisfying the "build/test on push" requirement for feature branches.
+
+### D23. Publish auth: npm Trusted Publishing (OIDC) — required
+**Decision:** Authentication for publishing uses **npm Trusted Publishing (OIDC)**; no long-lived `NPM_TOKEN` is stored in the repository.
+**Why:** OIDC removes the stored-secret attack surface and token-rotation chore, and attaches build **provenance** automatically. Bootstrap constraint documented for execution: npm can only attach a trusted publisher to a package that **already exists**, so the first publish creates the package name once (locally, with 2FA), after which every automated release runs through the workflow via OIDC. Requires npm ≥ 11.5.1 in the release job.
+
+### D24. Scaffolding scope: essentials now, community docs deferred
+**Decision:** This pass adds only `LICENSE`, CI workflows, `package.json` publish-metadata fixes, and `README`/`CLAUDE` doc fixes. `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, and issue/PR templates are deferred.
+**Why:** Ship the legally- and technically-necessary changes to publish now; add community-health files when the first external contributor makes them worthwhile, avoiding speculative ceremony for a small utility library.
+
+### D25. Pre-flight facts (recorded for auditability)
+- **Copyright holder:** `disphere interactive GmbH`, year `2026`.
+- **npm name:** `pdf-reducer` — available (unscoped).
+- **GitHub repo:** `https://github.com/volldigital/pdf-reducer` (no git remote configured yet at time of writing).
+- **History audit:** no `examples/` or `*.pdf` were ever committed; no credential/private-key patterns found in history. Note: a stray internal planning file (`.claude/plans/crystalline-scribbling-sloth.md`) exists in git history (not in the current tree) and would be visible once public — not sensitive; history rewrite is optional.
