@@ -55,4 +55,4 @@ jobs:
         run: git push --follow-tags
 
       - name: Publish to npm (OIDC Trusted Publishing, with provenance)
-        run: npm publish
+        run: npm publish --provenance
