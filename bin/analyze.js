@@ -7,7 +7,7 @@
 // pointing at the dominant contributor.
 //
 // Usage:
-//   node analyze.js <input.pdf> [--json] [--top N] [--max-decode-mb N]
+//   node bin/analyze.js <input.pdf> [--json] [--top N] [--max-decode-mb N]
 //
 // It is read-only: it never writes or modifies the input.
 
@@ -24,7 +24,7 @@ import {
   EncryptedPDFError,
 } from 'pdf-lib';
 
-import { inspectImages } from './pdfSizeReducer.js';
+import { inspectImages } from '../pdfSizeReducer.js';
 
 // ---------------------------------------------------------------------------
 // Interned names
@@ -63,7 +63,7 @@ const CATEGORY_ORDER = Object.values(CATEGORY);
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (!args.input) {
-    console.error('Usage: node analyze.js <input.pdf> [--json] [--top N] [--max-decode-mb N]');
+    console.error('Usage: node bin/analyze.js <input.pdf> [--json] [--top N] [--max-decode-mb N]');
     process.exit(1);
   }
 

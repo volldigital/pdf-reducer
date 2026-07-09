@@ -1,6 +1,6 @@
 // Small CLI to try the reducer on a real file:
 //
-//   node main.js <input.pdf> [output.pdf]
+//   node bin/main.js <input.pdf> [output.pdf]
 //
 // Reads the PDF from disk, runs reduce(), and writes the result to a COPY
 // (defaults to "<input>.reduced.pdf") — the original is never modified.
@@ -8,14 +8,14 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { reduce } from './pdfSizeReducer.js';
+import { reduce } from '../pdfSizeReducer.js';
 
 const fmtKB = (bytes) => `${(bytes / 1024).toFixed(1)} KB`;
 
 async function main() {
   const [inputPath, outputArg] = process.argv.slice(2);
   if (!inputPath) {
-    console.error('Usage: node main.js <input.pdf> [output.pdf]');
+    console.error('Usage: node bin/main.js <input.pdf> [output.pdf]');
     process.exit(1);
   }
 

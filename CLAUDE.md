@@ -43,9 +43,9 @@ The module also exports `inspectImages(base64Pdf)` — a read-only listing of ev
 
 ### Supporting files
 
-- `main.js` — CLI wrapper: `node main.js <input.pdf> [output.pdf]` reads a PDF, runs `reduce()`, writes a copy (original untouched).
-- `analyze.js` — read-only diagnostic: `node analyze.js <input.pdf> [--json] [--top N] [--max-decode-mb N]`. Attributes every byte to a role (content stream, image, embedded font, metadata, …) and reports the dominant contributor, including a content-stream operator profile that distinguishes real text from glyphs drawn as vector outlines. Reuses `inspectImages()` for the image-eligibility section. Explains why a "text-looking" PDF may not reduce.
-- `README.md` — developer-facing usage for the module, `main.js`, and `analyze.js`, plus an embedding example.
+- `bin/main.js` — CLI wrapper: `node bin/main.js <input.pdf> [output.pdf]` reads a PDF, runs `reduce()`, writes a copy (original untouched).
+- `bin/analyze.js` — read-only diagnostic: `node bin/analyze.js <input.pdf> [--json] [--top N] [--max-decode-mb N]`. Attributes every byte to a role (content stream, image, embedded font, metadata, …) and reports the dominant contributor, including a content-stream operator profile that distinguishes real text from glyphs drawn as vector outlines. Reuses `inspectImages()` for the image-eligibility section. Explains why a "text-looking" PDF may not reduce.
+- `README.md` — developer-facing usage for the module, `bin/main.js`, and `bin/analyze.js`, plus an embedding example.
 
 ## Commands
 

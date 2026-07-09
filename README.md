@@ -106,13 +106,13 @@ const rows = await inspectImages(base64Pdf);
 Two small Node scripts wrap the module for local use. Both read from and write
 to disk for convenience; the module itself stays string-in/string-out.
 
-### `main.js` — reduce a PDF on disk
+### `bin/main.js` — reduce a PDF on disk
 
 Reads a PDF, runs `reduce()`, and writes the result to a **copy** (the original
 is never modified).
 
 ```sh
-node main.js <input.pdf> [output.pdf]
+node bin/main.js <input.pdf> [output.pdf]
 ```
 
 - `output.pdf` defaults to `<input>.reduced.pdf` next to the input.
@@ -120,22 +120,22 @@ node main.js <input.pdf> [output.pdf]
   could be improved, it writes an identical copy and says so.
 
 ```sh
-$ node main.js 2.pdf
+$ node bin/main.js 2.pdf
 in : 2.pdf  (773.5 KB)
 out: 2.reduced.pdf  (249.6 KB)
 reduced by 67.7%
 ```
 
-### `analyze.js` — diagnose *why* a PDF is large
+### `bin/analyze.js` — diagnose *why* a PDF is large
 
 `reduce()` only re-compresses raster images. When a PDF barely shrinks, the
-weight lives elsewhere. `analyze.js` opens the PDF, attributes every byte to a
+weight lives elsewhere. `bin/analyze.js` opens the PDF, attributes every byte to a
 role (content stream, image, embedded font, metadata, …), and reports the
 dominant contributor. It is **read-only** — it never writes or modifies the
 input.
 
 ```sh
-node analyze.js <input.pdf> [--json] [--top N] [--max-decode-mb N]
+node bin/analyze.js <input.pdf> [--json] [--top N] [--max-decode-mb N]
 ```
 
 - `--json` — emit the full report as JSON instead of a formatted table.

@@ -519,8 +519,8 @@ full signature parser.
 ### This project's own docs
 - `DECISIONS.md` — the full, dated rationale and audit trail for every choice
   referenced above (D1–D19).
-- `README.md` — usage of the module, the `main.js` CLI, and the `analyze.js`
+- `README.md` — usage of the module, the `bin/main.js` CLI, and the `bin/analyze.js`
   diagnostic.
-- `analyze.js` — attributes every byte of a PDF to a role (image, content stream,
+- `bin/analyze.js` — attributes every byte of a PDF to a role (image, content stream,
   font, metadata…), which is the practical way to see *why* a given document
   will or won't shrink.
