@@ -2,13 +2,44 @@
   "name": "pdf-reducer",
   "version": "0.1.0",
   "description": "Reduce the file size of phone-scanned PDFs by re-compressing embedded images, preserving all other content.",
-  "private": true,
-  "license": "UNLICENSED",
+  "license": "0BSD",
+  "author": "disphere interactive GmbH",
   "type": "module",
   "main": "pdfSizeReducer.js",
   "exports": "./pdfSizeReducer.js",
+  "bin": {
+    "pdf-reducer": "bin/main.js",
+    "pdf-reducer-analyze": "bin/analyze.js"
+  },
+  "files": [
+    "pdfSizeReducer.js",
+    "bin/"
+  ],
+  "keywords": [
+    "pdf",
+    "compress",
+    "reduce",
+    "file-size",
+    "scan",
+    "image",
+    "jpeg",
+    "pdf-lib",
+    "sharp"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/volldigital/pdf-reducer.git"
+  },
+  "homepage": "https://github.com/volldigital/pdf-reducer#readme",
+  "bugs": {
+    "url": "https://github.com/volldigital/pdf-reducer/issues"
+  },
   "engines": {
     "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   },
   "scripts": {
     "test": "node --test",

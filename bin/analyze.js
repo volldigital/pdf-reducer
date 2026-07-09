@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 // analyze.js
 //
 // Diagnose *why* a PDF is large. The reducer in pdfSizeReducer.js only touches

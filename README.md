@@ -26,16 +26,16 @@ For the full rationale, trade-offs, and the audit trail, see
   gate is enforced by `npm run licenses:check` (fails on AGPL/GPL).
 
 ```sh
-npm install
+npm install pdf-reducer
 ```
 
-## Embedding `pdfSizeReducer.js` in your application
+## Embedding `pdf-reducer` in your application
 
 This is the primary integration path. The public boundary is
 **base64 string in → base64 string out** — no files, buffers, or paths.
 
 ```js
-import { reduce } from './pdfSizeReducer.js';
+import { reduce } from 'pdf-reducer';
 
 // `base64Pdf` is whatever your upload layer already has as a base64 string.
 const smaller = await reduce(base64Pdf);
@@ -47,7 +47,7 @@ const smaller = await reduce(base64Pdf);
 ### A realistic server-side example
 
 ```js
-import { reduce } from './pdfSizeReducer.js';
+import { reduce } from 'pdf-reducer';
 
 // e.g. an Express-style handler receiving a file upload.
 export async function handleUpload(req, res) {
@@ -86,7 +86,7 @@ const smaller = await reduce(base64Pdf, { maxDimension: 1500, quality: 60 });
 The frozen defaults are exported as `DEFAULTS` if you want to read them:
 
 ```js
-import { DEFAULTS } from './pdfSizeReducer.js';
+import { DEFAULTS } from 'pdf-reducer';
 ```
 
 ### Read-only inspection
@@ -96,7 +96,7 @@ re-compression gate depends on and whether each is eligible — useful for
 diagnostics and tests. It performs no mutation.
 
 ```js
-import { inspectImages } from './pdfSizeReducer.js';
+import { inspectImages } from 'pdf-reducer';
 const rows = await inspectImages(base64Pdf);
 // [{ ref, width, height, filter, colorSpace, eligible, skipReason, ... }]
 ```
@@ -104,7 +104,10 @@ const rows = await inspectImages(base64Pdf);
 ## Command-line tools
 
 Two small Node scripts wrap the module for local use. Both read from and write
-to disk for convenience; the module itself stays string-in/string-out.
+to disk for convenience; the module itself stays string-in/string-out. Once the
+package is installed they are also exposed as the commands `pdf-reducer` and
+`pdf-reducer-analyze` (usable via `npx pdf-reducer …`); the `node bin/…` forms
+below are equivalent when running from a clone of this repo.
 
 ### `bin/main.js` — reduce a PDF on disk
 
@@ -112,7 +115,8 @@ Reads a PDF, runs `reduce()`, and writes the result to a **copy** (the original
 is never modified).
 
 ```sh
-node bin/main.js <input.pdf> [output.pdf]
+node bin/main.js <input.pdf> [output.pdf]   # from a clone of this repo
+npx pdf-reducer <input.pdf> [output.pdf]     # when installed as a package
 ```
 
 - `output.pdf` defaults to `<input>.reduced.pdf` next to the input.
@@ -136,6 +140,7 @@ input.
 
 ```sh
 node bin/analyze.js <input.pdf> [--json] [--top N] [--max-decode-mb N]
+npx pdf-reducer-analyze <input.pdf> [--json] [--top N] [--max-decode-mb N]
 ```
 
 - `--json` — emit the full report as JSON instead of a formatted table.
@@ -159,6 +164,24 @@ essentially nothing for the image reducer to touch.
 - `npm run licenses` — production dependency license summary.
 - `npm run licenses:check` — **fails on AGPL/GPL** in the production tree (the
   commercial licensing gate).
+
+## Development
+
+Clone the repo and install the full toolchain (including dev dependencies) with a
+bare install:
+
+```sh
+npm install
+npm test
+```
+
+The project uses **trunk-based development**:
+
+- `main` is always releasable and is the source for published releases.
+- Work happens on short-lived `feature/*` branches, merged into `main` via pull
+  request. Every push and PR runs **build + test** in CI (no publishing).
+- Releases are cut deliberately (a maintainer runs the release workflow with the
+  target version); publishing is never automatic on a push to `main`.
 
 ## How it works (in brief)
 

@@ -1,6 +1,6 @@
 # Decisions Log
 
-This file records the decisions made while building `pdfSizeReducer.js`, and **why**, per the rules in `TASK.md`. When a decision changes, add a new dated entry explaining what changed and why — do not silently overwrite history.
+This file records the decisions made while building `pdfSizeReducer.js`, and **why**. When a decision changes, add a new dated entry explaining what changed and why — do not silently overwrite history.
 
 ---
 

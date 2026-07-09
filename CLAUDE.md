@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Goal
 
-Build a JavaScript helper that reduces the file size of user-uploaded PDFs. The PDFs are typically phone "scans" of documents and are therefore large. See `TASK.md` for the authoritative spec.
+Build a JavaScript helper that reduces the file size of user-uploaded PDFs. The PDFs are typically phone "scans" of documents and are therefore large.
 
 ## Deliverable / API contract
 
@@ -20,7 +20,7 @@ Build a JavaScript helper that reduces the file size of user-uploaded PDFs. The 
 
 ## Working Process
 
-`TASK.md` defines an ordered, approval-gated workflow. Follow it strictly:
+Follow this ordered, approval-gated workflow strictly:
 
 1. Research adequate libraries.
 2. Weigh pros and cons of each.

@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 // Small CLI to try the reducer on a real file:
 //
 //   node bin/main.js <input.pdf> [output.pdf]
