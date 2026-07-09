@@ -120,9 +120,9 @@ node main.js <input.pdf> [output.pdf]
   could be improved, it writes an identical copy and says so.
 
 ```sh
-$ node main.js examples/2.pdf
-in : examples/2.pdf  (773.5 KB)
-out: examples/2.reduced.pdf  (249.6 KB)
+$ node main.js 2.pdf
+in : 2.pdf  (773.5 KB)
+out: 2.reduced.pdf  (249.6 KB)
 reduced by 67.7%
 ```
 
@@ -147,7 +147,7 @@ sizes), a content-stream operator profile that distinguishes *real text* from
 *glyphs drawn as vector outlines*, an image-eligibility summary explaining what
 `reduce()` could act on, and a plain-language diagnosis.
 
-Example: `examples/1.pdf` looks like a text document but barely reduces. The
+Example: `1.pdf` looks like a text document but barely reduces. The
 tool shows why — it is 99% vector-path content streams with **no** text
 operators and **no** embedded fonts (every glyph is a filled path), so there is
 essentially nothing for the image reducer to touch.
