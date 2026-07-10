@@ -26,8 +26,8 @@ For the full rationale, trade-offs, and the audit trail, see
 - Node.js ≥ 22
 - Dependencies: [`pdf-lib`](https://www.npmjs.com/package/pdf-lib) (PDF
   parse/rewrite) and [`sharp`](https://www.npmjs.com/package/sharp) (JPEG
-  resize/re-encode). Both are permissively licensed; the commercial licensing
-  gate is enforced by `npm run licenses:check` (fails on AGPL/GPL).
+  resize/re-encode). Both are permissively licensed; the licensing gate
+  (no AGPL/GPL) is enforced by `npm run licenses:check`.
 
 ```sh
 npm install @disphere/pdf-reducer
@@ -167,7 +167,7 @@ essentially nothing for the image reducer to touch.
   `node --test test/e2e.test.js`.
 - `npm run licenses` — production dependency license summary.
 - `npm run licenses:check` — **fails on AGPL/GPL** in the production tree (the
-  commercial licensing gate).
+  gate that keeps the dependency tree permissively licensed).
 
 ## Development
 
@@ -186,6 +186,10 @@ The project uses **trunk-based development**:
   request. Every push and PR runs **build + test** in CI (no publishing).
 - Releases are cut deliberately (a maintainer runs the release workflow with the
   target version); publishing is never automatic on a push to `main`.
+
+New to the code? [`EXPLANATION.md`](./EXPLANATION.md) is a detailed, top-down walk
+through how `pdfSizeReducer.js` works internally — with just enough PDF structure
+to follow it.
 
 ## How it works (in brief)
 

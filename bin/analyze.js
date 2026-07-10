@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// analyze.js
+// bin/analyze.js
 //
 // Diagnose *why* a PDF is large. The reducer in pdfSizeReducer.js only touches
 // embedded raster images; when a PDF barely shrinks, the weight lives somewhere

@@ -16,7 +16,7 @@ Build a JavaScript helper that reduces the file size of user-uploaded PDFs. The 
 - Language: JavaScript.
 - Both input and output are base64-encoded strings (not files, buffers, or paths at the public boundary).
 - Prefer using libraries over hand-rolled code wherever possible.
-- **Licensing is a gating requirement.** This is a commercial application, so copyleft/AGPL-encumbered dependencies are disqualified. Ghostscript (AGPL) is explicitly excluded. Verify every candidate library's license before adopting it.
+- **Licensing is a gating requirement.** To keep the package permissively licensed (0BSD), copyleft/AGPL-encumbered dependencies are disqualified. Ghostscript (AGPL) is explicitly excluded. Verify every candidate library's license before adopting it.
 
 ## Working Process
 
@@ -51,7 +51,7 @@ The module also exports `inspectImages(base64Pdf)` — a read-only listing of ev
 
 - `npm test` — run the test suite (`node --test`, no extra runner). Single file: `node --test test/e2e.test.js`.
 - `npm run licenses` — production dependency license summary.
-- `npm run licenses:check` — **fails the build on AGPL/GPL** in the production tree (the commercial licensing gate).
+- `npm run licenses:check` — **fails the build on AGPL/GPL** in the production tree (the gate that keeps the dependency tree permissively licensed).
 
 ## Usage
 

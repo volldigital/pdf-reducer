@@ -130,7 +130,7 @@ This file records the decisions made while building `pdfSizeReducer.js`, and **w
 
 ## 2026-07-09 — Open-sourcing the repository
 
-The project is being open-sourced on GitHub (`volldigital/pdf-reducer`) and published to npm for reuse, using trunk-based development. The decisions below were made with the user; the driving brief is `OPEN_SOURCE_TASK.md`.
+The project is being open-sourced on GitHub (`volldigital/pdf-reducer`) and published to npm for reuse, using trunk-based development. The decisions below were made with the user.
 
 ### D20. License: `0BSD` (BSD Zero Clause)
 **Decision:** Release the project's own code under **0BSD**.
