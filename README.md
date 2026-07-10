@@ -1,5 +1,9 @@
 # pdf-reducer
 
+[![npm version](https://img.shields.io/npm/v/@disphere/pdf-reducer)](https://www.npmjs.com/package/@disphere/pdf-reducer)
+[![CI](https://github.com/volldigital/pdf-reducer/actions/workflows/ci.yml/badge.svg)](https://github.com/volldigital/pdf-reducer/actions/workflows/ci.yml)
+[![license: 0BSD](https://img.shields.io/badge/license-0BSD-blue.svg)](./LICENSE)
+
 Reduce the file size of user-uploaded PDFs — typically phone "scans" of
 documents, which tend to be large — by re-compressing their embedded raster
 images while preserving everything else.
