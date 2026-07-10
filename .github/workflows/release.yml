@@ -19,18 +19,19 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 24
           registry-url: https://registry.npmjs.org
           cache: npm
 
       # Trusted Publishing / OIDC provenance requires npm >= 11.5.1; the npm bundled with
-      # Node 20 is older, so upgrade it. Pin to the 11.x line rather than npm@latest:
-      # npm@12 dropped Node 20 support (requires Node >= 22.22.2), so @latest fails EBADENGINE.
+      # Node 24 can be below that, so upgrade it. Pin to the 11.x line rather than npm@latest:
+      # npm@12 requires Node >= 22.22.2/24.15.0, and @latest is a moving target, so a pin is
+      # deterministic and 11.x satisfies the >= 11.5.1 requirement.
       - name: Ensure npm supports Trusted Publishing
         run: npm install -g npm@11
 

@@ -19,7 +19,7 @@ For the full rationale, trade-offs, and the audit trail, see
 
 ## Requirements
 
-- Node.js ≥ 18
+- Node.js ≥ 22
 - Dependencies: [`pdf-lib`](https://www.npmjs.com/package/pdf-lib) (PDF
   parse/rewrite) and [`sharp`](https://www.npmjs.com/package/sharp) (JPEG
   resize/re-encode). Both are permissively licensed; the commercial licensing
