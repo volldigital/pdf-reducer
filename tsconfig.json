@@ -1,0 +1,26 @@
+{
+  // Base config: strict type-checking for the whole tree (src, bin, tests).
+  // It never emits — `tsconfig.build.json` handles emitting dist/. Tests import
+  // src with `.ts` specifiers and run via Node's native type-stripping, so
+  // `allowImportingTsExtensions` + `noEmit` are required here.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "types": ["node"],
+    "esModuleInterop": true,
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "skipLibCheck": true
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}

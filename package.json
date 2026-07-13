@@ -5,15 +5,20 @@
   "license": "0BSD",
   "author": "disphere interactive GmbH",
   "type": "module",
-  "main": "pdfSizeReducer.js",
-  "exports": "./pdfSizeReducer.js",
+  "main": "./dist/pdfSizeReducer.js",
+  "types": "./dist/pdfSizeReducer.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/pdfSizeReducer.d.ts",
+      "import": "./dist/pdfSizeReducer.js"
+    }
+  },
   "bin": {
-    "pdf-reducer": "bin/main.js",
-    "pdf-reducer-analyze": "bin/analyze.js"
+    "pdf-reducer": "./dist/bin/main.js",
+    "pdf-reducer-analyze": "./dist/bin/analyze.js"
   },
   "files": [
-    "pdfSizeReducer.js",
-    "bin/"
+    "dist"
   ],
   "keywords": [
     "pdf",
@@ -41,7 +46,10 @@
     "access": "public"
   },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
     "test": "node --test",
+    "prepublishOnly": "npm run build",
     "licenses": "license-checker --production --summary",
     "licenses:check": "license-checker --production --failOn 'AGPL-1.0;AGPL-3.0;GPL-2.0;GPL-3.0'"
   },
@@ -50,6 +58,8 @@
     "sharp": "^0.33.0"
   },
   "devDependencies": {
-    "license-checker": "^25.0.1"
+    "@types/node": "^26.1.1",
+    "license-checker": "^25.0.1",
+    "typescript": "^5.9.3"
   }
 }

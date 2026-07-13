@@ -1,11 +1,11 @@
-// pdfSizeReducer.js
+// pdfSizeReducer.ts
 //
 // Reduces the file size of phone-scanned PDFs by re-compressing their embedded
 // raster images, while preserving everything else (text, AcroForm fields and
 // values, the hidden OCR text layer, annotations, bookmarks, structure).
 //
 // Public API:
-//   reduce(base64Pdf: string, options?): Promise<string>
+//   reduce(base64Pdf: string, options?: ReduceOptions): Promise<string>
 //
 // Guarantee: this function never throws and never returns a broken document.
 // On any problem — invalid input, encrypted or signed PDF, or no achievable
@@ -24,6 +24,7 @@ import {
   PDFRawStream,
   EncryptedPDFError,
 } from 'pdf-lib';
+import type { PDFRef, PDFContext, PDFObject } from 'pdf-lib';
 
 // Interned PDFName singletons — pdf-lib caches these, so identity (===)
 // comparison against parsed values is valid.
@@ -44,8 +45,41 @@ const N_DCTDECODE = PDFName.of('DCTDecode');
 const N_DEVICERGB = PDFName.of('DeviceRGB');
 const N_DEVICEGRAY = PDFName.of('DeviceGray');
 
+/** Caller-tunable options for {@link reduce}. All fields are optional; unset or
+ * out-of-range values fall back to (and are clamped against) {@link DEFAULTS}. */
+export interface ReduceOptions {
+  /** Cap on the longest side, in pixels. */
+  maxDimension?: number;
+  /** JPEG quality (mozjpeg), 1–100. */
+  quality?: number;
+  /** Keep a re-encoded image only if it is <= this fraction of the original. */
+  minSavingsRatio?: number;
+  /** pdf-lib save option (lossless). */
+  useObjectStreams?: boolean;
+  /** Max images re-encoded in parallel (bounds memory). */
+  concurrency?: number;
+}
+
+/** Fully-resolved options after validation/clamping — every field present. */
+type NormalizedOptions = Required<ReduceOptions>;
+
+/** One row of {@link inspectImages}: an image XObject and the gate's verdict. */
+export interface ImageInspection {
+  ref: string;
+  width: number | undefined;
+  height: number | undefined;
+  bitsPerComponent: number | undefined;
+  filter: string | null;
+  colorSpace: string | null;
+  hasDecode: boolean;
+  isImageMask: boolean;
+  hasSMask: boolean;
+  eligible: boolean;
+  skipReason: string | null;
+}
+
 /** Default tuning ("Balanced" profile — see DECISIONS.md D5). */
-export const DEFAULTS = Object.freeze({
+export const DEFAULTS: NormalizedOptions = Object.freeze({
   maxDimension: 2000, // cap on the longest side, in pixels
   quality: 72, // JPEG quality (mozjpeg)
   minSavingsRatio: 0.95, // keep a re-encoded image only if <= 95% of the original
@@ -55,11 +89,11 @@ export const DEFAULTS = Object.freeze({
 
 /**
  * Reduce the size of a base64-encoded PDF.
- * @param {string} base64Pdf base64-encoded PDF
- * @param {object} [options] see DEFAULTS
- * @returns {Promise<string>} base64-encoded PDF (may be the original, unchanged)
+ * @param base64Pdf base64-encoded PDF
+ * @param options see {@link DEFAULTS}
+ * @returns base64-encoded PDF (may be the original, unchanged)
  */
-export async function reduce(base64Pdf, options = {}) {
+export async function reduce(base64Pdf: string, options: ReduceOptions = {}): Promise<string> {
   // Contract is string-in/string-out. Anything else: hand it straight back.
   if (typeof base64Pdf !== 'string') return base64Pdf;
 
@@ -73,7 +107,7 @@ export async function reduce(base64Pdf, options = {}) {
     // EncryptedPDFError when an /Encrypt dict is present -> pass through.
     // A load failure for any other reason means the input is not a parseable
     // PDF (corrupt) -> also pass through untouched.
-    let doc;
+    let doc: PDFDocument;
     try {
       doc = await PDFDocument.load(bytes, { updateMetadata: false });
     } catch (err) {
@@ -90,7 +124,7 @@ export async function reduce(base64Pdf, options = {}) {
     // concurrency pool (the expensive, native sharp work runs in parallel),
     // and finally apply the results sequentially (mutation stays simple and
     // deterministic).
-    const candidates = [];
+    const candidates: Candidate[] = [];
     for (const { ref, stream, dict } of collectImageStreams(doc.context)) {
       const params = readImageParams(dict);
       if (!canReencode(params).ok) continue;
@@ -137,10 +171,8 @@ export async function reduce(base64Pdf, options = {}) {
  * Read-only inspection: list every image XObject in the PDF with the fields we
  * gate on and whether it is eligible for re-compression. Used for diagnostics
  * and tests; performs no mutation.
- * @param {string} base64Pdf
- * @returns {Promise<Array<object>>}
  */
-export async function inspectImages(base64Pdf) {
+export async function inspectImages(base64Pdf: string): Promise<ImageInspection[]> {
   const bytes = toBytes(base64Pdf);
   const doc = await PDFDocument.load(bytes, { updateMetadata: false });
   return collectImageStreams(doc.context).map(({ ref, dict }) => {
@@ -168,14 +200,51 @@ export default { reduce, inspectImages, DEFAULTS };
 // Internal helpers
 // ---------------------------------------------------------------------------
 
+/** An image XObject that passed the gate and is queued for re-encoding. */
+interface Candidate {
+  ref: PDFRef;
+  dict: PDFDict;
+  params: ImageParams;
+  original: Uint8Array;
+}
+
+/** The image-XObject fields the gate depends on. */
+interface ImageParams {
+  filter: PDFObject | undefined;
+  colorSpace: PDFObject | undefined;
+  width: number | undefined;
+  height: number | undefined;
+  bpc: number | undefined;
+  hasDecode: boolean;
+  isImageMask: boolean;
+  hasSMask: boolean;
+  hasMask: boolean;
+  hasMatte: boolean;
+}
+
+/** Result of a successful sharp re-encode. */
+interface ReencodeResult {
+  bytes: Uint8Array;
+  width: number;
+  height: number;
+  isGray: boolean;
+}
+
+/** The gate's verdict for one image. */
+interface GateResult {
+  ok: boolean;
+  reason: string | null;
+}
+
 /**
  * Collect every image XObject in the document as indirect objects.
  * Image streams are always top-level indirect objects (never inside object
  * streams), so enumerateIndirectObjects() reliably surfaces all of them.
- * @returns {Array<{ref: import('pdf-lib').PDFRef, stream: PDFRawStream, dict: PDFDict}>}
  */
-function collectImageStreams(context) {
-  const out = [];
+function collectImageStreams(
+  context: PDFContext,
+): Array<{ ref: PDFRef; stream: PDFRawStream; dict: PDFDict }> {
+  const out: Array<{ ref: PDFRef; stream: PDFRawStream; dict: PDFDict }> = [];
   for (const [ref, obj] of context.enumerateIndirectObjects()) {
     if (!(obj instanceof PDFRawStream)) continue;
     if (obj.dict.lookup(N_SUBTYPE) !== N_IMAGE) continue;
@@ -185,7 +254,7 @@ function collectImageStreams(context) {
 }
 
 /** Extract the fields the gate depends on from an image XObject dict. */
-function readImageParams(dict) {
+function readImageParams(dict: PDFDict): ImageParams {
   const imageMask = dict.lookup(N_IMAGEMASK);
   const decode = dict.lookup(N_DECODE);
   return {
@@ -204,12 +273,15 @@ function readImageParams(dict) {
 
 /**
  * Downsample + re-encode a JPEG image with sharp.
- * @param {Uint8Array} bytes the original JPEG (a DCTDecode stream's contents)
- * @param {object} params from readImageParams (drives grayscale handling)
- * @param {object} opts maxDimension / quality
- * @returns {Promise<{bytes: Uint8Array, width: number, height: number, isGray: boolean} | null>}
+ * @param bytes the original JPEG (a DCTDecode stream's contents)
+ * @param params from readImageParams (drives grayscale handling)
+ * @param opts maxDimension / quality
  */
-async function reencodeJpeg(bytes, params, opts) {
+async function reencodeJpeg(
+  bytes: Uint8Array,
+  params: ImageParams,
+  opts: NormalizedOptions,
+): Promise<ReencodeResult> {
   const isGray = params.colorSpace === N_DEVICEGRAY;
 
   let pipeline = sharp(Buffer.from(bytes)).resize({
@@ -234,7 +306,12 @@ async function reencodeJpeg(bytes, params, opts) {
  * content-stream `Do` reference to it stays valid. pdf-lib recomputes /Length
  * from the new contents at save time, so we don't set it here.
  */
-function applyReencoded(context, ref, dict, result) {
+function applyReencoded(
+  context: PDFContext,
+  ref: PDFRef,
+  dict: PDFDict,
+  result: ReencodeResult,
+): void {
   dict.set(N_WIDTH, PDFNumber.of(result.width));
   dict.set(N_HEIGHT, PDFNumber.of(result.height));
   dict.set(N_BPC, PDFNumber.of(8)); // JPEG is always 8-bit
@@ -248,9 +325,8 @@ function applyReencoded(context, ref, dict, result) {
  * The v1 gate (see DECISIONS.md D4): re-compress only single-filter DCTDecode
  * (JPEG) images in DeviceRGB/DeviceGray, with no /Decode array and not an
  * image mask. Everything else is passed through untouched.
- * @returns {{ok: boolean, reason: string|null}}
  */
-function canReencode(p) {
+function canReencode(p: ImageParams): GateResult {
   if (p.isImageMask) return skip('image mask');
   if (p.hasDecode) return skip('has /Decode array');
   // /Mask (color-key ranges or a stencil mask): re-encoding shifts the exact
@@ -266,17 +342,17 @@ function canReencode(p) {
   return { ok: true, reason: null };
 }
 
-const skip = (reason) => ({ ok: false, reason });
+const skip = (reason: string): GateResult => ({ ok: false, reason });
 
 /** Read a numeric dict entry as a JS number, or undefined if absent.
  * Uses lookupMaybe because typed lookup() throws on a missing key. */
-function numOf(dict, name) {
+function numOf(dict: PDFDict, name: PDFName): number | undefined {
   const v = dict.lookupMaybe(name, PDFNumber);
   return v ? v.asNumber() : undefined;
 }
 
 /** Human-readable label for a PDF object, for diagnostics. */
-function label(v) {
+function label(v: PDFObject | null | undefined): string | null {
   if (v == null) return null;
   if (v instanceof PDFName || v instanceof PDFArray) return v.toString();
   return v.constructor?.name ?? String(v);
@@ -284,9 +360,10 @@ function label(v) {
 
 /** Validate and clamp caller options against DEFAULTS. Never throws: unknown
  * or out-of-range values fall back to sane bounds so reduce() stays robust. */
-function normalizeOptions(options) {
-  const o = options && typeof options === 'object' ? options : {};
-  const num = (v, def) => (typeof v === 'number' && Number.isFinite(v) ? v : def);
+function normalizeOptions(options: ReduceOptions): NormalizedOptions {
+  const o: ReduceOptions = options && typeof options === 'object' ? options : {};
+  const num = (v: unknown, def: number): number =>
+    typeof v === 'number' && Number.isFinite(v) ? v : def;
   return {
     maxDimension: Math.max(16, Math.round(num(o.maxDimension, DEFAULTS.maxDimension))),
     quality: Math.min(100, Math.max(1, Math.round(num(o.quality, DEFAULTS.quality)))),
@@ -299,13 +376,17 @@ function normalizeOptions(options) {
 
 /** Run `fn` over `items` with at most `limit` in flight at once, preserving
  * input order in the returned results array. */
-async function mapWithConcurrency(items, limit, fn) {
-  const results = new Array(items.length);
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T, idx: number) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array<R>(items.length);
   let next = 0;
-  const worker = async () => {
+  const worker = async (): Promise<void> => {
     while (next < items.length) {
       const idx = next++;
-      results[idx] = await fn(items[idx], idx);
+      results[idx] = await fn(items[idx]!, idx);
     }
   };
   const size = Math.min(limit, items.length);
@@ -315,12 +396,12 @@ async function mapWithConcurrency(items, limit, fn) {
 
 /** Decode a base64 string to bytes. Lenient: invalid input yields garbage
  * bytes that later fail to parse as a PDF (and are then passed through). */
-function toBytes(base64) {
+function toBytes(base64: string): Uint8Array {
   return new Uint8Array(Buffer.from(base64, 'base64'));
 }
 
 /** Encode bytes to a base64 string. */
-function toBase64(bytes) {
+function toBase64(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString('base64');
 }
 
@@ -328,7 +409,7 @@ function toBase64(bytes) {
  * Detect whether a loaded document carries a digital signature. Conservative:
  * any positive signal returns true so we pass the document through untouched.
  */
-function isSigned(doc) {
+function isSigned(doc: PDFDocument): boolean {
   try {
     const catalog = doc.catalog;
 

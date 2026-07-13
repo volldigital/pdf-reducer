@@ -169,3 +169,23 @@ The project is being open-sourced on GitHub (`volldigital/pdf-reducer`) and publ
 ### D28. Branch protection: light ruleset on `main` (block force-push + deletion only)
 **Decision:** Protect `main` with a ruleset that restricts deletions and blocks force-pushes, but does **not** require pull requests or status checks.
 **Why:** `release.yml` pushes its `npm version` bump commit + tag to `main` as `github-actions[bot]` (the default `GITHUB_TOKEN`). Per GitHub's ruleset docs, bypass actors may be repo/org/enterprise admins, the write/maintain role, teams, GitHub Apps, or Dependabot — **but not the default `GITHUB_TOKEN`/`github-actions[bot]`**. Requiring PRs or status checks on `main` would therefore block the release push and force a bypass identity (a GitHub App installation token or an admin PAT) plus a `release.yml` change. We chose the lighter ruleset to keep zero extra secrets/setup and leave `release.yml` untouched; force-push/deletion protection still guards against the most damaging mistakes, and PR/CI discipline remains a team convention. Revisit with a GitHub App token bypass if enforced PR review later becomes necessary.
+
+---
+
+## 2026-07-14 — Migrate to TypeScript
+
+The codebase was converted from JavaScript to TypeScript with strict type
+safety, published via the idiomatic `src/` → `dist/` layout. Decisions below
+were made with the user.
+
+### D29. TypeScript, `src/` → `dist/`, compiled JS + `.d.ts` (supersedes the "single output file `pdfSizeReducer.js`" contract in D1/D18)
+**Decision:** Author all code as TypeScript in `src/` (`src/pdfSizeReducer.ts`, `src/bin/main.ts`, `src/bin/analyze.ts`) and compile with `tsc` to `dist/` as ESM JavaScript + declaration files + source maps. `package.json` `main`/`types`/`exports`/`bin` point at `dist/`; `files` is `["dist"]`; `dist/` is git-ignored and rebuilt by `prepublishOnly`. Tests were converted to `.ts` under `test/` and run via `node --test` using Node ≥22.18's native type-stripping, importing `src/*.ts` directly (no build needed to test). Two configs: `tsconfig.json` (strict base — `strict`, `noUncheckedIndexedAccess`, `noImplicitOverride`, `noFallthroughCasesInSwitch`, `verbatimModuleSyntax`, `isolatedModules`; type-checks `src/` + `test/`, `noEmit`) and `tsconfig.build.json` (emits `src/` → `dist/` only). New dev deps: `typescript`, `@types/node` (`pdf-lib` and `sharp` ship their own types).
+**Why:** The user asked to convert to TypeScript and chose the ecosystem-idiomatic library layout: source and compiled output are separated, and consumers receive runnable JS plus `.d.ts` for editor support — never raw `.ts`. This supersedes the original "single output file `pdfSizeReducer.js`" deliverable (D1); the published entry is now the *compiled* `dist/pdfSizeReducer.js`, keeping the same `reduce(base64Pdf)` / `inspectImages(base64Pdf)` runtime contract. The public API additionally exports the types `ReduceOptions` and `ImageInspection`.
+
+### D30. Stay ESM-only (no dual CJS build)
+**Decision:** Keep the package ESM-only (`"type": "module"`, a single `import` condition in `exports`); do not add a CommonJS build.
+**Why:** The package was already ESM-only before the migration, so CJS consumers always had to use dynamic `import()` — no regression. A dual build adds real complexity (two output trees, `exports` conditions, dual-package-hazard risk) for a consumer base that, for a Node ≥22 utility, is overwhelmingly ESM. `arethetypeswrong` flags only the expected "node16 (from CJS) → ESM (dynamic import only)"; `publint` is clean. Revisit only if a real CJS-only consumer appears.
+
+### D31. Pure language migration — behavior and test fixtures unchanged
+**Decision:** The conversion changes types only, not runtime behavior; all 31 tests pass unchanged in intent. Deliberate contract-misuse tests (`reduce(undefined)`, non-object options) use `as unknown as` casts so the runtime robustness path is still exercised. sharp's `Create` type wrongly requires `background` even when `noise` fills the canvas; because adding a `background` was verified to **change the generated JPEG bytes**, the noise fixtures use a documented `as unknown as sharp.Create` cast (zero runtime change) rather than an added background.
+**Why:** The task was a migration, not a rewrite. Keeping fixtures byte-for-byte identical preserves the meaning of every existing assertion and keeps the audit trail (D1–D28) valid.

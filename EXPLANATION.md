@@ -1,6 +1,6 @@
-# How `pdfSizeReducer.js` Works — and Enough PDF Internals to Follow It
+# How `src/pdfSizeReducer.ts` Works — and Enough PDF Internals to Follow It
 
-This document explains what `pdfSizeReducer.js` does and *why*, by teaching just
+This document explains what `src/pdfSizeReducer.ts` does and *why*, by teaching just
 enough about the internal structure of a PDF to make the code readable.
 
 It is written to be read **top-down and stopped at any point**. Each section is
@@ -51,7 +51,7 @@ the spec).
 
 At the bottom, a PDF is built from a handful of primitive object types. The
 `pdf-lib` library gives each one a class, and you'll see them imported at the top
-of the module (`pdfSizeReducer.js:17-26`):
+of the module (`src/pdfSizeReducer.ts:17-27`):
 
 | PDF object | What it is | `pdf-lib` class |
 |---|---|---|
@@ -100,7 +100,7 @@ This is the single most important structural fact for understanding the code:
 > Because an image lives at a stable reference like `12 0`, we can **replace the
 > bytes at that reference** with a smaller JPEG, and every page that said "draw
 > object 12 here" automatically draws the new, smaller image. Nothing else has to
-> change. The code leans on this in `applyReencoded` (`pdfSizeReducer.js:237-245`).
+> change. The code leans on this in `applyReencoded` (`src/pdfSizeReducer.ts:309-322`).
 
 ### 2.3 How the objects hang together (the document tree)
 
@@ -139,7 +139,7 @@ single flat enumeration and no recursion (§4, and `DECISIONS.md` D11).
 
 ## 3. The pipeline, end to end
 
-With the model in place, the whole of `reduce()` (`pdfSizeReducer.js:62-134`)
+With the model in place, the whole of `reduce()` (`src/pdfSizeReducer.ts:96-168`)
 reads as a short pipeline. Here is the shape, with the guarantees called out:
 
 ```
@@ -160,10 +160,10 @@ reduce(base64Pdf)
 ```
 
 Notice how many branches return the **original** input. That is the design
-philosophy stated in the file header (`pdfSizeReducer.js:10-13`): the function
+philosophy stated in the file header (`src/pdfSizeReducer.ts:10-12`): the function
 *never throws and never returns a broken document*. Every uncertain path falls
 back to "hand back exactly what you were given." The whole body is wrapped in a
-`try/catch` (`pdfSizeReducer.js:68,130-133`) so even an unforeseen failure
+`try/catch` (`src/pdfSizeReducer.ts:102,164-167`) so even an unforeseen failure
 degrades to a safe pass-through.
 
 The next four sections zoom into the four substantive steps: **find** (§4),
@@ -176,10 +176,12 @@ The next four sections zoom into the four substantive steps: **find** (§4),
 
 ### 4.1 Finding every image
 
-```js
-// pdfSizeReducer.js:177-185
-function collectImageStreams(context) {
-  const out = [];
+```ts
+// src/pdfSizeReducer.ts:244-254
+function collectImageStreams(
+  context: PDFContext,
+): Array<{ ref: PDFRef; stream: PDFRawStream; dict: PDFDict }> {
+  const out: Array<{ ref: PDFRef; stream: PDFRawStream; dict: PDFDict }> = [];
   for (const [ref, obj] of context.enumerateIndirectObjects()) {
     if (!(obj instanceof PDFRawStream)) continue;
     if (obj.dict.lookup(N_SUBTYPE) !== N_IMAGE) continue;
@@ -207,17 +209,17 @@ The `ref` we keep for each image is the key to lossless replacement later — it
 the `12 0` identity from §2.2.
 
 > **Performance detail — interned names.** The comparison `=== N_IMAGE`
-> (`pdfSizeReducer.js:181`) is a pointer comparison, not a string compare.
+> (`src/pdfSizeReducer.ts:250`) is a pointer comparison, not a string compare.
 > `pdf-lib` *interns* `PDFName` values: `PDFName.of('Image')` always returns the
 > same object, so a parsed `/Image` name is literally the same object as our
-> `N_IMAGE` singleton (`pdfSizeReducer.js:30-45`). The comment at
-> `pdfSizeReducer.js:28-29` notes exactly this.
+> `N_IMAGE` singleton (`src/pdfSizeReducer.ts:31-46`). The comment at
+> `src/pdfSizeReducer.ts:29-30` notes exactly this.
 
 ### 4.2 Reading the properties the decision depends on
 
-```js
-// pdfSizeReducer.js:188-203  (abridged)
-function readImageParams(dict) {
+```ts
+// src/pdfSizeReducer.ts:257-272  (abridged)
+function readImageParams(dict: PDFDict): ImageParams {
   return {
     filter: dict.lookup(N_FILTER),        // /DCTDecode, /FlateDecode, [chain], …
     colorSpace: dict.lookup(N_COLORSPACE),// /DeviceRGB, /DeviceGray, /ICCBased, …
@@ -240,7 +242,7 @@ dictionary entries the safety gate needs. The rest of what these entries mean is
 the subject of §5.
 
 > **`pdf-lib` sharp edge, learned the hard way.** `numOf`
-> (`pdfSizeReducer.js:273-276`) uses `lookupMaybe`, not `lookup`, because
+> (`src/pdfSizeReducer.ts:349-352`) uses `lookupMaybe`, not `lookup`, because
 > `pdf-lib`'s *typed* `lookup(name, Type)` **throws** when the key is absent
 > instead of returning `undefined`. `DECISIONS.md` D13 tells the story: this
 > exact trap once made `isSigned()` throw on every ordinary PDF, causing the tool
@@ -256,9 +258,9 @@ ordinary photo. Many PDF image features make an image's exact samples
 *load-bearing* for something else — a mask, a blend, a remap — and re-encoding
 would quietly corrupt them. The gate refuses every such case.
 
-```js
-// pdfSizeReducer.js:253-267
-function canReencode(p) {
+```ts
+// src/pdfSizeReducer.ts:329-343
+function canReencode(p: ImageParams): GateResult {
   if (p.isImageMask) return skip('image mask');
   if (p.hasDecode)   return skip('has /Decode array');
   if (p.hasMask)     return skip('has /Mask');
@@ -320,7 +322,7 @@ disqualifying structural flags first, then filter, then colour space, then
 dimensions.
 
 This same gate powers the read-only `inspectImages()` export
-(`pdfSizeReducer.js:143-163`), which lists every image and *why* it was or wasn't
+(`src/pdfSizeReducer.ts:175-195`), which lists every image and *why* it was or wasn't
 eligible — useful for understanding a specific document without changing it.
 
 ---
@@ -332,9 +334,13 @@ JPEG, the other swaps it into the graph.
 
 ### 6.1 Making a smaller JPEG
 
-```js
-// pdfSizeReducer.js:212-230  (abridged)
-async function reencodeJpeg(bytes, params, opts) {
+```ts
+// src/pdfSizeReducer.ts:280-302  (abridged)
+async function reencodeJpeg(
+  bytes: Uint8Array,
+  params: ImageParams,
+  opts: NormalizedOptions,
+): Promise<ReencodeResult> {
   const isGray = params.colorSpace === N_DEVICEGRAY;
 
   let pipeline = sharp(Buffer.from(bytes)).resize({
@@ -364,26 +370,31 @@ size levers are pulled:
    encoder tuned for smaller files at equal visual quality.
 
 > **The subtle bug that *isn't* here:** there is deliberately **no `.rotate()`**
-> (`pdfSizeReducer.js:221-222`). sharp can auto-rotate from EXIF orientation, but
+> (`src/pdfSizeReducer.ts:293-294`). sharp can auto-rotate from EXIF orientation, but
 > the PDF's content stream already positions the image via its transformation
 > matrix (CTM). Auto-rotating the pixels would desync them from that matrix and
 > turn the page sideways. Leaving orientation alone keeps pixels and placement in
 > agreement (`DECISIONS.md` D12).
 
-The re-encode work runs through `mapWithConcurrency` (`pdfSizeReducer.js:302-314`),
+The re-encode work runs through `mapWithConcurrency` (`src/pdfSizeReducer.ts:379-395`),
 a tiny worker-pool that keeps at most `concurrency` (default 4) images in flight.
 The expensive native image work parallelizes for throughput, while memory stays
 bounded to a few decoded images at a time (`DECISIONS.md` D17).
 
-And the **smaller-only rule** (`pdfSizeReducer.js:104-106`): a re-encoded image is
+And the **smaller-only rule** (`src/pdfSizeReducer.ts:138-139`): a re-encoded image is
 kept only if it is `≤ 95%` of the original. A photo that's already well-compressed
 is left exactly as it was.
 
 ### 6.2 Swapping it into the graph
 
-```js
-// pdfSizeReducer.js:237-245
-function applyReencoded(context, ref, dict, result) {
+```ts
+// src/pdfSizeReducer.ts:309-322
+function applyReencoded(
+  context: PDFContext,
+  ref: PDFRef,
+  dict: PDFDict,
+  result: ReencodeResult,
+): void {
   dict.set(N_WIDTH,  PDFNumber.of(result.width));
   dict.set(N_HEIGHT, PDFNumber.of(result.height));
   dict.set(N_BPC,    PDFNumber.of(8));            // JPEG is always 8-bit
@@ -410,7 +421,7 @@ file needed editing. `DECISIONS.md` D12 records the empirical proof: page conten
 streams are **byte-identical** before and after — the guarantee that text, the
 OCR layer, and annotations survive.
 
-Finally the document is re-serialized with `doc.save(...)` (`pdfSizeReducer.js:124`)
+Finally the document is re-serialized with `doc.save(...)` (`src/pdfSizeReducer.ts:158`)
 and, if it genuinely came out smaller, base64-encoded and returned.
 
 ---
@@ -422,8 +433,9 @@ technically open them. Both guards sit before the pipeline.
 
 ### 7.1 Encrypted PDFs
 
-```js
-// pdfSizeReducer.js:76-82
+```ts
+// src/pdfSizeReducer.ts:110-116
+let doc: PDFDocument;
 try {
   doc = await PDFDocument.load(bytes, { updateMetadata: false });
 } catch (err) {
@@ -443,9 +455,9 @@ way in (`DECISIONS.md` D9).
 
 ### 7.2 Digitally signed PDFs
 
-```js
-// pdfSizeReducer.js:331-363  (abridged)
-function isSigned(doc) {
+```ts
+// src/pdfSizeReducer.ts:412-444  (abridged)
+function isSigned(doc: PDFDocument): boolean {
   try {
     const catalog = doc.catalog;
     if (catalog.lookup(PDFName.of('Perms'))) return true;         // usage-rights / DocMDP
@@ -519,8 +531,8 @@ full signature parser.
 ### This project's own docs
 - `DECISIONS.md` — the full, dated rationale and audit trail for every choice
   referenced above (D1–D19).
-- `README.md` — usage of the module, the `bin/main.js` CLI, and the `bin/analyze.js`
+- `README.md` — usage of the module, the `src/bin/main.ts` CLI, and the `src/bin/analyze.ts`
   diagnostic.
-- `bin/analyze.js` — attributes every byte of a PDF to a role (image, content stream,
+- `src/bin/analyze.ts` — attributes every byte of a PDF to a role (image, content stream,
   font, metadata…), which is the practical way to see *why* a given document
   will or won't shrink.

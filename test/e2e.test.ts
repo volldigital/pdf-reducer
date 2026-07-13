@@ -14,25 +14,32 @@ import {
   decodePDFRawStream,
 } from 'pdf-lib';
 
-import { reduce, inspectImages } from '../pdfSizeReducer.js';
+import { reduce, inspectImages } from '../src/pdfSizeReducer.ts';
 
-const noisyJpg = (w = 3000, h = 2250) =>
+const noisyJpg = (w = 3000, h = 2250): Promise<Buffer> =>
   sharp({
-    create: { width: w, height: h, channels: 3, noise: { type: 'gaussian', mean: 128, sigma: 60 } },
+    // sharp's Create type wrongly requires `background`; `noise` fills the
+    // canvas at runtime, so cast rather than add one (which changes the bytes).
+    create: {
+      width: w,
+      height: h,
+      channels: 3,
+      noise: { type: 'gaussian', mean: 128, sigma: 60 },
+    } as unknown as sharp.Create,
   })
     .jpeg({ quality: 92 })
     .toBuffer();
 
-const b64Len = (s) => Buffer.from(s, 'base64').length;
+const b64Len = (s: string): number => Buffer.from(s, 'base64').length;
 
-async function pageContentBytes(base64) {
+async function pageContentBytes(base64: string): Promise<string[]> {
   const doc = await PDFDocument.load(Buffer.from(base64, 'base64'));
   return doc.getPages().map((page) => {
     const contents = page.node.Contents();
     const streams = contents instanceof PDFArray ? contents.asArray() : [contents];
     return Buffer.concat(
       streams.map((s) => {
-        const stream = s instanceof PDFRawStream ? s : doc.context.lookup(s);
+        const stream = (s instanceof PDFRawStream ? s : doc.context.lookup(s)) as PDFRawStream;
         return Buffer.from(decodePDFRawStream(stream).decode());
       }),
     ).toString('latin1');
@@ -44,7 +51,7 @@ const FIELD_VALUE = 'Erika Mustermann';
 const OCR_TOKEN = 'OCR_HIDDEN_TOKEN_42';
 
 /** A scan-like PDF: big image + invisible OCR text + a filled form field. */
-async function buildKitchenSink() {
+async function buildKitchenSink(): Promise<string> {
   const doc = await PDFDocument.create();
   const font = await doc.embedFont(StandardFonts.Helvetica);
   const page = doc.addPage([600, 800]);
@@ -81,7 +88,8 @@ test('reduces the file while preserving form value, OCR text, and annotations', 
   assert.equal(outDoc.getPageCount(), inDoc.getPageCount());
 
   // Annotation count per page unchanged (the field's widget).
-  const annots = (doc) => doc.getPages().map((p) => p.node.Annots()?.size() ?? 0);
+  const annots = (doc: PDFDocument): number[] =>
+    doc.getPages().map((p) => p.node.Annots()?.size() ?? 0);
   assert.deepEqual(annots(outDoc), annots(inDoc));
 
   // Content streams byte-identical → all text (incl. the invisible OCR layer)
@@ -92,12 +100,17 @@ test('reduces the file while preserving form value, OCR text, and annotations', 
   // pdf-lib writes the text as a hex string literal (<...> Tj), so look for
   // the hex-encoded token rather than raw ASCII.
   const tokenHex = Buffer.from(OCR_TOKEN, 'latin1').toString('hex').toUpperCase();
-  assert.ok(outContent.toUpperCase().includes(tokenHex), 'OCR text token still present');
+  assert.ok(
+    outContent && outContent.toUpperCase().includes(tokenHex),
+    'OCR text token still present',
+  );
 
   // The image was downsampled.
   const imgs = (await inspectImages(output)).filter((i) => i.filter === '/DCTDecode');
   assert.equal(imgs.length, 1);
-  assert.ok(imgs[0].width <= 2000);
+  const [img] = imgs;
+  assert.ok(img);
+  assert.ok(img.width! <= 2000);
 });
 
 test('running reduce twice is stable (second pass is a no-op)', async () => {
@@ -118,14 +131,21 @@ test('filter chain [FlateDecode DCTDecode] is skipped', async () => {
 
   const d2 = await PDFDocument.load(Buffer.from(base64, 'base64'));
   for (const [, obj] of d2.context.enumerateIndirectObjects()) {
-    if (obj instanceof PDFRawStream && obj.dict.lookup(PDFName.of('Subtype')) === PDFName.of('Image')) {
-      obj.dict.set(PDFName.of('Filter'), d2.context.obj([PDFName.of('FlateDecode'), PDFName.of('DCTDecode')]));
+    if (
+      obj instanceof PDFRawStream &&
+      obj.dict.lookup(PDFName.of('Subtype')) === PDFName.of('Image')
+    ) {
+      obj.dict.set(
+        PDFName.of('Filter'),
+        d2.context.obj([PDFName.of('FlateDecode'), PDFName.of('DCTDecode')]),
+      );
       break;
     }
   }
   base64 = Buffer.from(await d2.save()).toString('base64');
 
   const [img0] = await inspectImages(base64);
+  assert.ok(img0);
   assert.equal(img0.eligible, false);
   assert.equal(img0.skipReason, 'filter is not a single DCTDecode');
 });
@@ -139,7 +159,10 @@ test('a bilevel CCITTFax-filtered image is skipped (filter gate)', async () => {
 
   const d2 = await PDFDocument.load(Buffer.from(base64, 'base64'));
   for (const [, obj] of d2.context.enumerateIndirectObjects()) {
-    if (obj instanceof PDFRawStream && obj.dict.lookup(PDFName.of('Subtype')) === PDFName.of('Image')) {
+    if (
+      obj instanceof PDFRawStream &&
+      obj.dict.lookup(PDFName.of('Subtype')) === PDFName.of('Image')
+    ) {
       obj.dict.set(PDFName.of('Filter'), PDFName.of('CCITTFaxDecode'));
       break;
     }
@@ -147,6 +170,7 @@ test('a bilevel CCITTFax-filtered image is skipped (filter gate)', async () => {
   base64 = Buffer.from(await d2.save()).toString('base64');
 
   const [img0] = await inspectImages(base64);
+  assert.ok(img0);
   assert.equal(img0.eligible, false);
   assert.equal(img0.skipReason, 'filter is not a single DCTDecode');
 });

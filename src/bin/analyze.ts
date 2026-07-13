@@ -24,8 +24,9 @@ import {
   PDFRef,
   EncryptedPDFError,
 } from 'pdf-lib';
+import type { PDFContext, PDFObject } from 'pdf-lib';
 
-import { inspectImages } from '../pdfSizeReducer.js';
+import { inspectImages, type ImageInspection } from '../pdfSizeReducer.js';
 
 // ---------------------------------------------------------------------------
 // Interned names
@@ -54,14 +55,68 @@ const CATEGORY = {
   OBJSTM: 'Object streams',
   XREF: 'Cross-reference streams',
   OTHER: 'Other streams',
-};
-const CATEGORY_ORDER = Object.values(CATEGORY);
+} as const;
+type Category = (typeof CATEGORY)[keyof typeof CATEGORY];
+const CATEGORY_ORDER: Category[] = Object.values(CATEGORY);
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+type Align = 'left' | 'right';
+
+interface Args {
+  input: string | null;
+  json: boolean;
+  top: number;
+  maxDecodeMb: number;
+}
+
+interface CategoryBucket {
+  name: Category;
+  count: number;
+  raw: number;
+  decoded: number;
+}
+
+interface StreamRecord {
+  ref: string;
+  category: Category;
+  raw: number;
+  decoded: number | null;
+  filter: string;
+}
+
+type OpGroupName = 'path' | 'paint' | 'textShow' | 'textObj' | 'xobject' | 'inlineImage';
+type OpGroups = Record<OpGroupName, number>;
+type OpCounts = Record<string, number>;
+
+interface OperatorSummary {
+  groups: OpGroups;
+  byOp: OpCounts;
+}
+
+interface Report {
+  file: string | null;
+  fileBytes: number;
+  pdfVersion: string;
+  linearized: boolean;
+  pageCount: number | null;
+  objectCount: number;
+  streamCount: number;
+  nonStreamObjects: number;
+  structuralOverhead: number;
+  categories: CategoryBucket[];
+  largestStreams: StreamRecord[];
+  operators: OperatorSummary;
+  scan: { decodedScanned: number; truncated: boolean; budgetMb: number };
+  images?: ImageInspection[];
+}
 
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
-async function main() {
+async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   if (!args.input) {
     console.error('Usage: node bin/analyze.js <input.pdf> [--json] [--top N] [--max-decode-mb N]');
@@ -70,7 +125,7 @@ async function main() {
 
   const bytes = new Uint8Array(await readFile(args.input));
 
-  let doc;
+  let doc: PDFDocument;
   try {
     doc = await PDFDocument.load(bytes, { updateMetadata: false });
   } catch (err) {
@@ -80,7 +135,8 @@ async function main() {
       );
       process.exit(2);
     }
-    console.error(`Cannot analyze: "${args.input}" is not a parseable PDF (${err.message}).`);
+    const reason = err instanceof Error ? err.message : String(err);
+    console.error(`Cannot analyze: "${args.input}" is not a parseable PDF (${reason}).`);
     process.exit(2);
   }
 
@@ -109,14 +165,14 @@ async function main() {
  * Walk every indirect object, attribute each stream's bytes to a role, and
  * accumulate per-category totals plus a content-stream operator profile.
  */
-function analyze(doc, bytes, args) {
+function analyze(doc: PDFDocument, bytes: Uint8Array, args: Args): Report {
   const ctx = doc.context;
   const roles = buildRoleMap(ctx);
 
-  const categories = new Map(
+  const categories = new Map<Category, CategoryBucket>(
     CATEGORY_ORDER.map((name) => [name, { name, count: 0, raw: 0, decoded: 0 }]),
   );
-  const streams = []; // per-stream records, for the "largest objects" table
+  const streams: StreamRecord[] = []; // per-stream records, for the "largest objects" table
   let nonStreamObjects = 0;
   let streamRawTotal = 0;
 
@@ -124,7 +180,7 @@ function analyze(doc, bytes, args) {
   const decodeBudget = args.maxDecodeMb * 1024 * 1024;
   let decodedScanned = 0;
   let scanTruncated = false;
-  const ops = Object.create(null);
+  const ops: OpCounts = Object.create(null);
 
   for (const [ref, obj] of ctx.enumerateIndirectObjects()) {
     if (!(obj instanceof PDFRawStream)) {
@@ -140,7 +196,7 @@ function analyze(doc, bytes, args) {
     const filters = filterNames(dict);
     const decoded = decodedLength(obj.contents, filters);
 
-    const bucket = categories.get(category);
+    const bucket = categories.get(category)!;
     bucket.count++;
     bucket.raw += raw;
     bucket.decoded += decoded ?? raw;
@@ -178,7 +234,7 @@ function analyze(doc, bytes, args) {
     nonStreamObjects,
     // Everything that is not raw stream payload: dict text, xref, whitespace.
     structuralOverhead: Math.max(0, bytes.length - streamRawTotal),
-    categories: CATEGORY_ORDER.map((name) => categories.get(name)).filter((c) => c.count > 0),
+    categories: CATEGORY_ORDER.map((name) => categories.get(name)!).filter((c) => c.count > 0),
     largestStreams: streams.slice(0, args.top),
     operators: summarizeOperators(ops),
     scan: { decodedScanned, truncated: scanTruncated, budgetMb: args.maxDecodeMb },
@@ -190,9 +246,9 @@ function analyze(doc, bytes, args) {
  * Content streams and font programs carry no /Type of their own, so we discover
  * them by following /Contents and /FontFile* references from other objects.
  */
-function buildRoleMap(ctx) {
-  const roles = new Map();
-  const tag = (v, role) => {
+function buildRoleMap(ctx: PDFContext): Map<string, string> {
+  const roles = new Map<string, string>();
+  const tag = (v: PDFObject | undefined, role: string): void => {
     if (v instanceof PDFRef) roles.set(v.toString(), role);
   };
   for (const [, obj] of ctx.enumerateIndirectObjects()) {
@@ -211,7 +267,7 @@ function buildRoleMap(ctx) {
 }
 
 /** Assign one category to a stream from its own dict plus the role map. */
-function classify(ref, dict, roles) {
+function classify(ref: PDFRef, dict: PDFDict, roles: Map<string, string>): Category {
   const subtype = dict.get(N_SUBTYPE);
   if (subtype === N_IMAGE) return CATEGORY.IMAGE;
   if (subtype === N_FORM) return CATEGORY.FORM;
@@ -234,11 +290,11 @@ function classify(ref, dict, roles) {
 // ---------------------------------------------------------------------------
 
 /** Filter names for a stream dict, as plain strings (handles name or array). */
-function filterNames(dict) {
+function filterNames(dict: PDFDict): string[] {
   const f = dict.get(N_FILTER);
   if (f instanceof PDFName) return [f.decodeText()];
   if (f instanceof PDFArray) {
-    const out = [];
+    const out: string[] = [];
     for (let i = 0; i < f.size(); i++) {
       const el = f.get(i);
       if (el instanceof PDFName) out.push(el.decodeText());
@@ -253,7 +309,7 @@ function filterNames(dict) {
  * Handles the two common cases: stored (no filter) and single-filter
  * FlateDecode. Anything else (DCTDecode, filter chains, LZW, ...) returns null.
  */
-function decodedBytes(raw, filters) {
+function decodedBytes(raw: Uint8Array, filters: string[]): Buffer | null {
   if (filters.length === 0) return Buffer.from(raw); // stored, already "decoded"
   if (filters.length !== 1 || filters[0] !== 'FlateDecode') return null;
   try {
@@ -264,7 +320,7 @@ function decodedBytes(raw, filters) {
 }
 
 /** Decoded byte length of a stream, or null when we can't cheaply decode it. */
-function decodedLength(raw, filters) {
+function decodedLength(raw: Uint8Array, filters: string[]): number | null {
   const buf = decodedBytes(raw, filters);
   return buf ? buf.length : null;
 }
@@ -277,7 +333,7 @@ function decodedLength(raw, filters) {
 // outlines" verdict. Path-construction + fill/stroke ops dominate a document
 // whose glyphs were converted to outlines; text-showing ops dominate one with
 // real, selectable text.
-const OP_GROUPS = {
+const OP_GROUPS: Record<OpGroupName, string[]> = {
   path: ['m', 'l', 'c', 'v', 'y', 're', 'h'],
   paint: ['f', 'f*', 'F', 'S', 's', 'B', 'B*', 'b', 'b*'],
   textShow: ['Tj', 'TJ', "'", '"'],
@@ -285,28 +341,28 @@ const OP_GROUPS = {
   xobject: ['Do'],
   inlineImage: ['BI'],
 };
-const TRACKED_OPS = new Set(Object.values(OP_GROUPS).flat());
+const TRACKED_OPS = new Set<string>(Object.values(OP_GROUPS).flat());
 
 /**
  * Count operator tokens in a decoded content stream. Heuristic: string and hex
  * literals are stripped first so their contents can't masquerade as operators;
  * inline-image binary is not fully parsed, so counts are approximate.
  */
-function countOperators(text, acc) {
+function countOperators(text: string, acc: OpCounts): void {
   const cleaned = text
     .replace(/\((?:\\.|[^\\()])*\)/gs, ' ') // (string) literals
     .replace(/<[0-9a-fA-F\s]*>/g, ' '); // <hex> literals
   for (const m of cleaned.matchAll(/(?:^|[\s])([A-Za-z'"*]+|f\*|b\*|B\*)(?=[\s]|$)/g)) {
     const op = m[1];
-    if (TRACKED_OPS.has(op)) acc[op] = (acc[op] || 0) + 1;
+    if (op !== undefined && TRACKED_OPS.has(op)) acc[op] = (acc[op] ?? 0) + 1;
   }
 }
 
 /** Fold raw operator counts into group totals + a plain-language verdict. */
-function summarizeOperators(ops) {
-  const groups = {};
-  for (const [group, names] of Object.entries(OP_GROUPS)) {
-    groups[group] = names.reduce((sum, n) => sum + (ops[n] || 0), 0);
+function summarizeOperators(ops: OpCounts): OperatorSummary {
+  const groups = {} as OpGroups;
+  for (const [group, names] of Object.entries(OP_GROUPS) as [OpGroupName, string[]][]) {
+    groups[group] = names.reduce((sum, n) => sum + (ops[n] ?? 0), 0);
   }
   return { groups, byOp: ops };
 }
@@ -315,13 +371,13 @@ function summarizeOperators(ops) {
 // File-level probes
 // ---------------------------------------------------------------------------
 
-function headerVersion(bytes) {
+function headerVersion(bytes: Uint8Array): string {
   const head = Buffer.from(bytes.subarray(0, 16)).toString('latin1');
   const m = head.match(/%PDF-(\d+\.\d+)/);
-  return m ? m[1] : 'unknown';
+  return m ? m[1]! : 'unknown';
 }
 
-function isLinearized(bytes) {
+function isLinearized(bytes: Uint8Array): boolean {
   const head = Buffer.from(bytes.subarray(0, 2048)).toString('latin1');
   return /\/Linearized/.test(head);
 }
@@ -330,8 +386,8 @@ function isLinearized(bytes) {
 // Reporting
 // ---------------------------------------------------------------------------
 
-function printReport(r, args) {
-  const pct = (n) => `${((n / r.fileBytes) * 100).toFixed(1)}%`;
+function printReport(r: Report, args: Args): void {
+  const pct = (n: number): string => `${((n / r.fileBytes) * 100).toFixed(1)}%`;
 
   line();
   console.log(`PDF size analysis: ${r.file}`);
@@ -359,13 +415,8 @@ function printReport(r, args) {
     pct(r.structuralOverhead),
     '—',
   ]);
-  table(['Category', 'Count', 'Compressed', '% file', 'Decoded'], rows, [
-    'left',
-    'right',
-    'right',
-    'right',
-    'right',
-  ]);
+  const catAlign: Align[] = ['left', 'right', 'right', 'right', 'right'];
+  table(['Category', 'Count', 'Compressed', '% file', 'Decoded'], rows, catAlign);
   console.log('');
 
   // --- content-stream verdict (the usual culprit for "text-only" bloat) ---
@@ -374,13 +425,13 @@ function printReport(r, args) {
   if (contentCat) {
     console.log('Content-stream composition:');
     console.log('');
-    const pathTotal = g.path;
-    const drawing = g.path + g.paint;
     console.log(`  Path-construction ops (m l c v y re h)   ${g.path.toLocaleString()}`);
     console.log(`  Fill / stroke ops (f S B ...)            ${g.paint.toLocaleString()}`);
     console.log(`  Text-showing ops (Tj TJ ' ")             ${g.textShow.toLocaleString()}`);
     console.log(`  Text objects (BT)                        ${g.textObj.toLocaleString()}`);
-    console.log(`  Image draws (Do) / inline images (BI)    ${g.xobject.toLocaleString()} / ${g.inlineImage.toLocaleString()}`);
+    console.log(
+      `  Image draws (Do) / inline images (BI)    ${g.xobject.toLocaleString()} / ${g.inlineImage.toLocaleString()}`,
+    );
     if (r.scan.truncated) {
       console.log(`  (operator scan stopped at ${r.scan.budgetMb} MB decoded; counts are a sample)`);
     }
@@ -395,6 +446,7 @@ function printReport(r, args) {
   // --- largest individual objects ---
   console.log(`Largest ${r.largestStreams.length} streams:`);
   console.log('');
+  const streamAlign: Align[] = ['left', 'left', 'right', 'right', 'left'];
   table(
     ['Object', 'Category', 'Compressed', 'Decoded', 'Filter'],
     r.largestStreams.map((s) => [
@@ -404,7 +456,7 @@ function printReport(r, args) {
       s.decoded != null ? fmtBytes(s.decoded) : '—',
       s.filter,
     ]),
-    ['left', 'left', 'right', 'right', 'left'],
+    streamAlign,
   );
   console.log('');
 
@@ -416,8 +468,8 @@ function printReport(r, args) {
   console.log('');
 }
 
-function printImageSummary(r) {
-  const imgs = r.images || [];
+function printImageSummary(r: Report): void {
+  const imgs = r.images ?? [];
   const eligible = imgs.filter((i) => i.eligible);
   console.log('Embedded raster images:');
   console.log('');
@@ -426,10 +478,15 @@ function printImageSummary(r) {
     console.log('');
     return;
   }
-  console.log(`  ${imgs.length} image(s); ${eligible.length} eligible for re-compression by reduce().`);
-  const skips = {};
+  console.log(
+    `  ${imgs.length} image(s); ${eligible.length} eligible for re-compression by reduce().`,
+  );
+  const skips: Record<string, number> = {};
   for (const i of imgs) {
-    if (!i.eligible) skips[i.skipReason] = (skips[i.skipReason] || 0) + 1;
+    if (!i.eligible) {
+      const reason = i.skipReason ?? 'unknown';
+      skips[reason] = (skips[reason] ?? 0) + 1;
+    }
   }
   for (const [reason, n] of Object.entries(skips)) {
     console.log(`    skipped: ${reason} × ${n}`);
@@ -438,7 +495,7 @@ function printImageSummary(r) {
 }
 
 /** One-sentence read on the content-stream operator mix. */
-function contentVerdict(r) {
+function contentVerdict(r: Report): string {
   const g = r.operators.groups;
   const drawing = g.path + g.paint;
   if (g.textShow === 0 && drawing > 1000) {
@@ -454,8 +511,8 @@ function contentVerdict(r) {
 }
 
 /** The bottom-line explanation + recommendations, tailored to the numbers. */
-function diagnosis(r) {
-  const out = [];
+function diagnosis(r: Report): string[] {
+  const out: string[] = [];
   const top = [...r.categories].sort((a, b) => b.raw - a.raw)[0];
   if (!top) return ['No stream payload found.'];
 
@@ -511,14 +568,14 @@ function diagnosis(r) {
 // Small formatting utilities
 // ---------------------------------------------------------------------------
 
-function fmtBytes(n) {
+function fmtBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / (1024 * 1024)).toFixed(2)} MB`;
 }
 
-function shortCat(name) {
-  const map = {
+function shortCat(name: Category): string {
+  const map: Record<Category, string> = {
     [CATEGORY.CONTENT]: 'content',
     [CATEGORY.IMAGE]: 'image',
     [CATEGORY.FORM]: 'form',
@@ -531,38 +588,39 @@ function shortCat(name) {
   return map[name] ?? name;
 }
 
-function table(headers, rows, align) {
+function table(headers: string[], rows: string[][], align: Align[]): void {
   const widths = headers.map((h, i) =>
     Math.max(h.length, ...rows.map((r) => String(r[i]).length)),
   );
-  const fmtCell = (val, i) => {
+  const fmtCell = (val: string, i: number): string => {
     const s = String(val);
-    const pad = widths[i] - s.length;
+    const pad = widths[i]! - s.length;
     return align[i] === 'right' ? ' '.repeat(pad) + s : s + ' '.repeat(pad);
   };
-  const render = (cells) => '  ' + cells.map((c, i) => fmtCell(c, i)).join('  ');
+  const render = (cells: string[]): string => '  ' + cells.map((c, i) => fmtCell(c, i)).join('  ');
   console.log(render(headers));
   console.log('  ' + widths.map((w) => '-'.repeat(w)).join('  '));
   for (const r of rows) console.log(render(r));
 }
 
-function line() {
+function line(): void {
   console.log('='.repeat(72));
 }
 
-function parseArgs(argv) {
-  const args = { input: null, json: false, top: 12, maxDecodeMb: 512 };
+function parseArgs(argv: string[]): Args {
+  const args: Args = { input: null, json: false, top: 12, maxDecodeMb: 512 };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--json') args.json = true;
-    else if (a === '--top') args.top = Math.max(1, parseInt(argv[++i], 10) || args.top);
-    else if (a === '--max-decode-mb') args.maxDecodeMb = Math.max(1, parseInt(argv[++i], 10) || args.maxDecodeMb);
-    else if (!a.startsWith('-') && !args.input) args.input = a;
+    else if (a === '--top') args.top = Math.max(1, parseInt(argv[++i] ?? '', 10) || args.top);
+    else if (a === '--max-decode-mb')
+      args.maxDecodeMb = Math.max(1, parseInt(argv[++i] ?? '', 10) || args.maxDecodeMb);
+    else if (a !== undefined && !a.startsWith('-') && !args.input) args.input = a;
   }
   return args;
 }
 
-function safe(fn, fallback) {
+function safe<T>(fn: () => T, fallback: T): T {
   try {
     return fn();
   } catch {
@@ -570,7 +628,7 @@ function safe(fn, fallback) {
   }
 }
 
-main().catch((err) => {
-  console.error('Failed:', err.stack || err.message);
+main().catch((err: unknown) => {
+  console.error('Failed:', err instanceof Error ? (err.stack ?? err.message) : String(err));
   process.exit(1);
 });
