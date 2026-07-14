@@ -1,0 +1,15 @@
+{
+  // Build config: emit src/ -> dist/ as JS + declaration files + source maps.
+  // This is what gets published. Tests are excluded; they run from source.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "allowImportingTsExtensions": false,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": ["src/**/*.ts"]
+}

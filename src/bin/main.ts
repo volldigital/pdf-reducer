@@ -11,9 +11,9 @@ import path from 'node:path';
 
 import { reduce } from '../pdfSizeReducer.js';
 
-const fmtKB = (bytes) => `${(bytes / 1024).toFixed(1)} KB`;
+const fmtKB = (bytes: number): string => `${(bytes / 1024).toFixed(1)} KB`;
 
-async function main() {
+async function main(): Promise<void> {
   const [inputPath, outputArg] = process.argv.slice(2);
   if (!inputPath) {
     console.error('Usage: node bin/main.js <input.pdf> [output.pdf]');
@@ -42,7 +42,7 @@ async function main() {
   );
 }
 
-main().catch((err) => {
-  console.error('Failed:', err.message);
+main().catch((err: unknown) => {
+  console.error('Failed:', err instanceof Error ? err.message : String(err));
   process.exit(1);
 });

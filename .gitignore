@@ -1,4 +1,5 @@
 .idea
 examples
 node_modules
+dist
 

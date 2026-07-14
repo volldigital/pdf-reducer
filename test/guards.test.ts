@@ -6,10 +6,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
 
-import { reduce } from '../pdfSizeReducer.js';
+import { reduce } from '../src/pdfSizeReducer.ts';
 
 /** A minimal valid, image-free PDF (text only) as base64. */
-async function makeTextPdfBase64() {
+async function makeTextPdfBase64(): Promise<string> {
   const doc = await PDFDocument.create();
   const page = doc.addPage([200, 200]);
   const font = await doc.embedFont(StandardFonts.Helvetica);
@@ -20,7 +20,7 @@ async function makeTextPdfBase64() {
 
 /** A valid PDF with an /Encrypt entry injected into the trailer, so a strict
  * load reports it as encrypted. */
-async function makeEncryptedPdfBase64() {
+async function makeEncryptedPdfBase64(): Promise<string> {
   const doc = await PDFDocument.create();
   doc.addPage([200, 200]);
   // Presence of /Encrypt in the trailer is what triggers EncryptedPDFError on
@@ -50,15 +50,14 @@ test('empty string is returned verbatim', async () => {
 test('encrypted PDF is passed through untouched', async () => {
   const input = await makeEncryptedPdfBase64();
   // Sanity: confirm the fixture really is detected as encrypted by pdf-lib.
-  await assert.rejects(
-    PDFDocument.load(Buffer.from(input, 'base64')),
-    /encrypted/i,
-  );
+  await assert.rejects(PDFDocument.load(Buffer.from(input, 'base64')), /encrypted/i);
   const output = await reduce(input);
   assert.equal(output, input);
 });
 
 test('non-string input is returned as-is', async () => {
-  assert.equal(await reduce(undefined), undefined);
-  assert.equal(await reduce(null), null);
+  // Deliberate contract misuse from untyped JS callers: reduce() must hand the
+  // value straight back, so we bypass the string type on purpose.
+  assert.equal(await reduce(undefined as unknown as string), undefined);
+  assert.equal(await reduce(null as unknown as string), null);
 });

@@ -8,8 +8,10 @@ Reduce the file size of user-uploaded PDFs — typically phone "scans" of
 documents, which tend to be large — by re-compressing their embedded raster
 images while preserving everything else.
 
-The core is a single ESM module, [`pdfSizeReducer.js`](./pdfSizeReducer.js),
-exposing one method: `reduce(base64Pdf)`. It is **surgical** — it re-encodes
+The core is a single ESM module — authored in TypeScript
+([`src/pdfSizeReducer.ts`](./src/pdfSizeReducer.ts)) and published as compiled
+JavaScript with type declarations — exposing one method: `reduce(base64Pdf)`. It
+is **surgical** — it re-encodes
 only eligible embedded images and replaces each stream *in place at the same
 object ref*, so text, AcroForm fields and values, the OCR text layer,
 annotations, bookmarks, and structure round-trip untouched.
@@ -110,16 +112,17 @@ const rows = await inspectImages(base64Pdf);
 Two small Node scripts wrap the module for local use. Both read from and write
 to disk for convenience; the module itself stays string-in/string-out. Once the
 package is installed they are also exposed as the commands `pdf-reducer` and
-`pdf-reducer-analyze` (usable via `npx @disphere/pdf-reducer …`); the `node bin/…`
-forms below are equivalent when running from a clone of this repo.
+`pdf-reducer-analyze` (usable via `npx @disphere/pdf-reducer …`); the
+`node dist/bin/…` forms below are equivalent when running from a clone of this
+repo (after `npm run build`).
 
-### `bin/main.js` — reduce a PDF on disk
+### `pdf-reducer` (`src/bin/main.ts`) — reduce a PDF on disk
 
 Reads a PDF, runs `reduce()`, and writes the result to a **copy** (the original
 is never modified).
 
 ```sh
-node bin/main.js <input.pdf> [output.pdf]              # from a clone of this repo
+node dist/bin/main.js <input.pdf> [output.pdf]        # from a clone (after: npm run build)
 npx @disphere/pdf-reducer <input.pdf> [output.pdf]    # when installed as a package
 ```
 
@@ -128,22 +131,22 @@ npx @disphere/pdf-reducer <input.pdf> [output.pdf]    # when installed as a pack
   could be improved, it writes an identical copy and says so.
 
 ```sh
-$ node bin/main.js 2.pdf
+$ node dist/bin/main.js 2.pdf
 in : 2.pdf  (773.5 KB)
 out: 2.reduced.pdf  (249.6 KB)
 reduced by 67.7%
 ```
 
-### `bin/analyze.js` — diagnose *why* a PDF is large
+### `pdf-reducer-analyze` (`src/bin/analyze.ts`) — diagnose *why* a PDF is large
 
 `reduce()` only re-compresses raster images. When a PDF barely shrinks, the
-weight lives elsewhere. `bin/analyze.js` opens the PDF, attributes every byte to a
+weight lives elsewhere. This tool opens the PDF, attributes every byte to a
 role (content stream, image, embedded font, metadata, …), and reports the
 dominant contributor. It is **read-only** — it never writes or modifies the
 input.
 
 ```sh
-node bin/analyze.js <input.pdf> [--json] [--top N] [--max-decode-mb N]
+node dist/bin/analyze.js <input.pdf> [--json] [--top N] [--max-decode-mb N]
 npx -p @disphere/pdf-reducer pdf-reducer-analyze <input.pdf> [--json] [--top N] [--max-decode-mb N]
 ```
 
@@ -163,8 +166,10 @@ essentially nothing for the image reducer to touch.
 
 ## Commands
 
-- `npm test` — run the test suite (`node --test`). Single file:
-  `node --test test/e2e.test.js`.
+- `npm run build` — compile `src/` → `dist/` (JS + `.d.ts` + source maps).
+- `npm run typecheck` — strict type-check of `src/` + `test/` (no emit).
+- `npm test` — run the test suite (`node --test`, native TypeScript
+  type-stripping — no build needed). Single file: `node --test test/e2e.test.ts`.
 - `npm run licenses` — production dependency license summary.
 - `npm run licenses:check` — **fails on AGPL/GPL** in the production tree (the
   gate that keeps the dependency tree permissively licensed).
@@ -172,11 +177,14 @@ essentially nothing for the image reducer to touch.
 ## Development
 
 Clone the repo and install the full toolchain (including dev dependencies) with a
-bare install:
+bare install. Tests run straight against the TypeScript sources — no build step
+required:
 
 ```sh
 npm install
-npm test
+npm test          # type-strips and runs test/*.ts against src/*.ts
+npm run typecheck # strict type-check
+npm run build     # emit dist/ (JS + .d.ts); done automatically on publish
 ```
 
 The project uses **trunk-based development**:
@@ -188,8 +196,8 @@ The project uses **trunk-based development**:
   target version); publishing is never automatic on a push to `main`.
 
 New to the code? [`EXPLANATION.md`](./EXPLANATION.md) is a detailed, top-down walk
-through how `pdfSizeReducer.js` works internally — with just enough PDF structure
-to follow it.
+through how `src/pdfSizeReducer.ts` works internally — with just enough PDF
+structure to follow it.
 
 ## How it works (in brief)
 
