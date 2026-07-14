@@ -1,6 +1,6 @@
 {
   "name": "@disphere/pdf-reducer",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "description": "Reduce the file size of phone-scanned PDFs by re-compressing embedded images, preserving all other content.",
   "license": "0BSD",
   "author": "disphere interactive GmbH",
