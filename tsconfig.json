@@ -5,7 +5,11 @@
   // `allowImportingTsExtensions` + `noEmit` are required here.
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2022"],
+    // DOM/DOM.Iterable: @jsquash's codecs type their I/O as `ImageData` (a DOM
+    // type). Node polyfills ImageData at runtime; these libs make the type
+    // resolve at compile time. Browser globals thus become visible in Node files
+    // too — an accepted trade-off (see DECISIONS.md).
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "types": ["node"],

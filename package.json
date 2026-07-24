@@ -54,6 +54,8 @@
     "licenses:check": "license-checker --production --failOn 'AGPL-1.0;AGPL-3.0;GPL-2.0;GPL-3.0'"
   },
   "dependencies": {
+    "@jsquash/jpeg": "^1.6.0",
+    "@jsquash/resize": "^2.1.1",
     "pdf-lib": "^1.17.1",
     "sharp": "^0.33.0"
   },

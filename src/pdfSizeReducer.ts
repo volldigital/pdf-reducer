@@ -13,7 +13,6 @@
 //
 // See DECISIONS.md for the rationale behind the approach and its limits.
 
-import sharp from 'sharp';
 import {
   PDFDocument,
   PDFName,
@@ -58,10 +57,15 @@ export interface ReduceOptions {
   useObjectStreams?: boolean;
   /** Max images re-encoded in parallel (bounds memory). */
   concurrency?: number;
+  /** Image codec used to re-encode JPEGs. Injected per environment by the
+   *  package entry point (Node/browser); override to supply a custom codec. */
+  encoder?: ImageEncoder;
 }
 
-/** Fully-resolved options after validation/clamping — every field present. */
-type NormalizedOptions = Required<ReduceOptions>;
+/** Fully-resolved options after validation/clamping — every numeric field
+ *  present. `encoder` is carried through as-is (may be undefined). */
+type NormalizedOptions = Required<Omit<ReduceOptions, 'encoder'>> &
+  Pick<ReduceOptions, 'encoder'>;
 
 /** One row of {@link inspectImages}: an image XObject and the gate's verdict. */
 export interface ImageInspection {
@@ -76,6 +80,35 @@ export interface ImageInspection {
   hasSMask: boolean;
   eligible: boolean;
   skipReason: string | null;
+}
+
+/** One image handed to an {@link ImageEncoder} for re-encoding. */
+export interface EncodeRequest {
+  /** The source JPEG (a DCTDecode stream's contents). */
+  bytes: Uint8Array;
+  /** Cap on the longest side, in pixels. The encoder MUST NOT upscale. */
+  maxDimension: number;
+  /** JPEG quality (mozjpeg), 1–100. */
+  quality: number;
+  /** Source color space was DeviceGray — prefer 1-channel (grayscale) output. */
+  wantGrayscale: boolean;
+}
+
+/** The re-encoded image an {@link ImageEncoder} returns. */
+export interface EncodedImage {
+  bytes: Uint8Array;
+  width: number;
+  height: number;
+  /** True iff `bytes` is a single-channel (grayscale) JPEG. MUST describe the
+   *  ACTUAL channel count of `bytes`, never merely echo the request — the PDF
+   *  /ColorSpace entry is written from this. */
+  isGray: boolean;
+}
+
+/** Pluggable JPEG re-encoder. The package entry point injects an environment-
+ *  appropriate implementation (@jsquash in both Node and the browser). */
+export interface ImageEncoder {
+  encode(req: EncodeRequest): Promise<EncodedImage>;
 }
 
 /** Default tuning ("Balanced" profile — see DECISIONS.md D5). */
@@ -98,6 +131,10 @@ export async function reduce(base64Pdf: string, options: ReduceOptions = {}): Pr
   if (typeof base64Pdf !== 'string') return base64Pdf;
 
   const opts = normalizeOptions(options);
+  const encoder = opts.encoder;
+  // No codec wired up (e.g. the core module used directly, without an entry
+  // point): nothing can be re-encoded -> hand the input straight back.
+  if (!encoder) return base64Pdf;
 
   try {
     const bytes = toBytes(base64Pdf);
@@ -121,9 +158,8 @@ export async function reduce(base64Pdf: string, options: ReduceOptions = {}): Pr
 
     // --- image re-compression pipeline ---
     // Collect eligible images first, then re-encode them with a bounded
-    // concurrency pool (the expensive, native sharp work runs in parallel),
-    // and finally apply the results sequentially (mutation stays simple and
-    // deterministic).
+    // concurrency pool (the expensive image re-encode work), and finally apply
+    // the results sequentially (mutation stays simple and deterministic).
     const candidates: Candidate[] = [];
     for (const { ref, stream, dict } of collectImageStreams(doc.context)) {
       const params = readImageParams(dict);
@@ -133,7 +169,7 @@ export async function reduce(base64Pdf: string, options: ReduceOptions = {}): Pr
 
     const reencoded = await mapWithConcurrency(candidates, opts.concurrency, async (c) => {
       try {
-        const result = await reencodeJpeg(c.original, c.params, opts);
+        const result = await reencodeJpeg(encoder, c.original, c.params, opts);
         if (!result) return null;
         // Keep the re-encoded image only if it is a real improvement.
         if (result.bytes.length > c.original.length * opts.minSavingsRatio) return null;
@@ -222,14 +258,6 @@ interface ImageParams {
   hasMatte: boolean;
 }
 
-/** Result of a successful sharp re-encode. */
-interface ReencodeResult {
-  bytes: Uint8Array;
-  width: number;
-  height: number;
-  isGray: boolean;
-}
-
 /** The gate's verdict for one image. */
 interface GateResult {
   ok: boolean;
@@ -272,33 +300,27 @@ function readImageParams(dict: PDFDict): ImageParams {
 }
 
 /**
- * Downsample + re-encode a JPEG image with sharp.
+ * Adapter: map an image XObject's params to an {@link EncodeRequest} and hand it
+ * to the injected {@link ImageEncoder}. The encoder owns the actual downsample +
+ * re-encode; the grayscale decision is derived from the source color space, but
+ * the returned {@link EncodedImage.isGray} reflects the encoder's ACTUAL output.
+ * @param encoder the environment's image codec
  * @param bytes the original JPEG (a DCTDecode stream's contents)
  * @param params from readImageParams (drives grayscale handling)
  * @param opts maxDimension / quality
  */
 async function reencodeJpeg(
+  encoder: ImageEncoder,
   bytes: Uint8Array,
   params: ImageParams,
   opts: NormalizedOptions,
-): Promise<ReencodeResult> {
-  const isGray = params.colorSpace === N_DEVICEGRAY;
-
-  let pipeline = sharp(Buffer.from(bytes)).resize({
-    width: opts.maxDimension,
-    height: opts.maxDimension,
-    fit: 'inside',
-    withoutEnlargement: true, // never upscale
+): Promise<EncodedImage> {
+  return encoder.encode({
+    bytes,
+    maxDimension: opts.maxDimension,
+    quality: opts.quality,
+    wantGrayscale: params.colorSpace === N_DEVICEGRAY,
   });
-  // NOTE: deliberately no .rotate() — EXIF auto-rotation would desync the
-  // pixels from the PDF content-stream CTM (see DECISIONS.md).
-  if (isGray) pipeline = pipeline.grayscale();
-
-  const { data, info } = await pipeline
-    .jpeg({ quality: opts.quality, mozjpeg: true })
-    .toBuffer({ resolveWithObject: true });
-
-  return { bytes: data, width: info.width, height: info.height, isGray };
 }
 
 /**
@@ -310,7 +332,7 @@ function applyReencoded(
   context: PDFContext,
   ref: PDFRef,
   dict: PDFDict,
-  result: ReencodeResult,
+  result: EncodedImage,
 ): void {
   dict.set(N_WIDTH, PDFNumber.of(result.width));
   dict.set(N_HEIGHT, PDFNumber.of(result.height));
@@ -371,6 +393,7 @@ function normalizeOptions(options: ReduceOptions): NormalizedOptions {
     useObjectStreams:
       typeof o.useObjectStreams === 'boolean' ? o.useObjectStreams : DEFAULTS.useObjectStreams,
     concurrency: Math.max(1, Math.round(num(o.concurrency, DEFAULTS.concurrency))),
+    encoder: o.encoder,
   };
 }
 
@@ -394,15 +417,25 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
-/** Decode a base64 string to bytes. Lenient: invalid input yields garbage
- * bytes that later fail to parse as a PDF (and are then passed through). */
+/** Decode a base64 string to bytes using the platform-global `atob` (present in
+ * Node 22+ and browsers), so no Buffer dependency. `atob` throws on malformed
+ * input; reduce() catches that and passes the original through. */
 function toBytes(base64: string): Uint8Array {
-  return new Uint8Array(Buffer.from(base64, 'base64'));
+  const binary = atob(base64);
+  const out = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
+  return out;
 }
 
-/** Encode bytes to a base64 string. */
+/** Encode bytes to a base64 string via the platform-global `btoa`. Chunked to
+ * stay within argument-count limits when spreading into String.fromCharCode. */
 function toBase64(bytes: Uint8Array): string {
-  return Buffer.from(bytes).toString('base64');
+  let binary = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
 }
 
 /**
